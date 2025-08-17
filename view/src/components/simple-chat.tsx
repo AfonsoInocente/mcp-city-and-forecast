@@ -1,12 +1,24 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Bot, User } from "lucide-react";
+import { Send, Bot, User, MapPin, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
+import { useSistemaInteligente } from "../lib/hooks";
+import { ACTIONS } from "../../../common/index";
 
 interface Message {
   id: string;
   content: string;
   role: "user" | "assistant";
   timestamp: Date;
+  data?: {
+    type: "zipCode" | "weather";
+    data: any;
+  };
+  options?: Array<{
+    id: string;
+    text: string;
+    value: string;
+    cityId?: number;
+  }>;
 }
 
 export function SimpleChat() {
@@ -27,9 +39,9 @@ export function SimpleChat() {
     },
   ]);
   const [inputValue, setInputValue] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const sistemaInteligente = useSistemaInteligente();
 
   // Scroll automático para a última mensagem
   useEffect(() => {
@@ -43,56 +55,129 @@ export function SimpleChat() {
     }
   }, []);
 
-  // Simula resposta da IA
-  const simulateAIResponse = (userMessage: string) => {
-    setIsTyping(true);
-
-    // Simula delay de digitação
-    setTimeout(
-      () => {
-        const responses = [
-          "Interessante! Conte-me mais sobre isso.",
-          "Entendo. Como posso ajudá-lo com isso?",
-          "Essa é uma ótima pergunta. Deixe-me pensar...",
-          "Obrigada por compartilhar. O que mais gostaria de saber?",
-          "Vejo que você está interessado nisso. Posso elaborar mais se quiser.",
-          "Perfeito! Há algo específico que gostaria de discutir sobre esse tópico?",
-        ];
-
-        const randomResponse =
-          responses[Math.floor(Math.random() * responses.length)];
-
-        const aiMessage: Message = {
-          id: `ai-${Date.now()}`,
-          content: randomResponse,
-          role: "assistant",
-          timestamp: new Date(),
-        };
-
-        setMessages((prev) => [...prev, aiMessage]);
-        setIsTyping(false);
-      },
-      1000 + Math.random() * 2000
-    ); // Delay entre 1-3 segundos
+  // Adiciona mensagem à lista
+  const addMessage = (
+    text: string,
+    isUser: boolean,
+    data?: any,
+    options?: Array<{
+      id: string;
+      text: string;
+      value: string;
+      cityId?: number;
+    }>
+  ) => {
+    const newMessage: Message = {
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      content: text,
+      role: isUser ? "user" : "assistant",
+      timestamp: new Date(),
+      data,
+      options,
+    };
+    setMessages((prev) => [...prev, newMessage]);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Processa resposta do sistema inteligente
+  const processAIResponse = (response: any) => {
+    // Mensagem inicial
+    addMessage(response.initialMessage, false);
+
+    // Se tem dados de CEP, adiciona como mensagem separada
+    if (response.zipCodeData) {
+      const zipCodeMessage = `📍 **Endereço:**\n• CEP: ${response.zipCodeData.zipcode}\n• Rua: ${response.zipCodeData.street}\n• Bairro: ${response.zipCodeData.neighborhood}\n• Cidade: ${response.zipCodeData.city}\n• Estado: ${response.zipCodeData.state}`;
+      addMessage(zipCodeMessage, false, {
+        type: "zipCode",
+        data: response.zipCodeData,
+      });
+    }
+
+    // Se tem dados de clima, adiciona como mensagem separada
+    if (response.weatherData && response.weatherData.weather?.length > 0) {
+      const weatherMessage = `🌤️ **Previsão do Tempo:**\n${response.weatherData.weather
+        .map(
+          (day: any) =>
+            `📅 ${new Date(day.date).toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" })}: ${day.conditionDescription} (${day.minimum}°C a ${day.maximum}°C)`
+        )
+        .join("\n")}`;
+      addMessage(weatherMessage, false, {
+        type: "weather",
+        data: response.weatherData,
+      });
+    }
+
+    // Se há múltiplas cidades, adiciona opções
+    if (response.action === ACTIONS.MULTIPLE_CITIES && response.citiesFound) {
+      const options = response.citiesFound.map((city: any) => ({
+        id: city.id.toString(),
+        text: `${city.name}/${city.state}`,
+        value: city.name,
+        cityId: city.id,
+      }));
+
+      addMessage("Escolha uma cidade:", false, undefined, options);
+    }
+
+    // Mensagem final (se diferente da inicial)
+    if (response.finalMessage !== response.initialMessage) {
+      addMessage(response.finalMessage, false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || isTyping) return;
+    if (!inputValue.trim() || sistemaInteligente.isPending) return;
 
-    const userMessage: Message = {
-      id: `user-${Date.now()}`,
-      content: inputValue.trim(),
-      role: "user",
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    const messageContent = inputValue.trim();
+    const userInput = inputValue.trim();
     setInputValue("");
 
-    // Simula resposta da IA
-    simulateAIResponse(messageContent);
+    // Adiciona mensagem do usuário
+    addMessage(userInput, true);
+
+    try {
+      // Chama o sistema inteligente
+      const response = await sistemaInteligente.mutateAsync({
+        userInput,
+      });
+
+      // Processa a resposta
+      processAIResponse(response);
+    } catch (error: any) {
+      console.error("Erro no sistema:", error);
+      addMessage(
+        `❌ ${error.message || "Erro ao processar sua consulta. Tente novamente."}`,
+        false
+      );
+    }
+  };
+
+  // Lida com clique em opções (múltiplas cidades)
+  const handleOptionClick = async (option: {
+    id: string;
+    text: string;
+    value: string;
+    cityId?: number;
+  }) => {
+    console.log("🎯 Opção selecionada:", option);
+
+    // Adiciona a seleção do usuário como mensagem
+    addMessage(`Escolhi: ${option.text}`, true);
+
+    try {
+      // Usa o sistema inteligente para processar a seleção da cidade
+      const response = await sistemaInteligente.mutateAsync({
+        userInput: `previsão do tempo em ${option.value}`,
+      });
+
+      // Processa a resposta
+      processAIResponse(response);
+    } catch (error: any) {
+      console.error("Erro ao processar opção:", error);
+      addMessage(
+        `❌ ${error.message || "Erro ao processar sua seleção. Tente novamente."}`,
+        false
+      );
+    }
   };
 
   const renderMessage = (message: Message) => {
@@ -130,6 +215,89 @@ export function SimpleChat() {
             <div className="text-sm leading-relaxed whitespace-pre-wrap">
               {message.content}
             </div>
+
+            {/* Renderizar dados estruturados se existirem */}
+            {message.data?.type === "zipCode" && (
+              <div className="mt-3 p-3 bg-white rounded border">
+                <div className="grid grid-cols-1 gap-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="font-medium">CEP:</span>
+                    <span>{message.data.data.zipcode}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="font-medium">Cidade:</span>
+                    <span>{message.data.data.city}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="font-medium">Estado:</span>
+                    <span>{message.data.data.state}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="font-medium">Bairro:</span>
+                    <span>{message.data.data.neighborhood}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="font-medium">Rua:</span>
+                    <span>{message.data.data.street}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {message.data?.type === "weather" &&
+              message.data.data.weather &&
+              message.data.data.weather.length > 0 && (
+                <div className="mt-3 p-3 bg-white rounded border">
+                  <div className="grid grid-cols-1 gap-2 text-xs">
+                    {message.data.data.weather
+                      .slice(0, 3)
+                      .map((day: any, index: number) => (
+                        <div
+                          key={index}
+                          className="flex justify-between items-center p-2 bg-gray-50 rounded"
+                        >
+                          <span className="font-medium">
+                            {new Date(day.date).toLocaleDateString("pt-BR", {
+                              weekday: "short",
+                              day: "numeric",
+                            })}
+                          </span>
+                          <span className="text-xs">
+                            {day.conditionDescription}
+                          </span>
+                          <span className="font-bold">
+                            {day.minimum}° - {day.maximum}°
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+            {/* Renderizar opções clicáveis se existirem */}
+            {message.options && message.options.length > 0 && (
+              <div className="mt-3 space-y-2">
+                <div className="text-xs text-gray-600 mb-2">
+                  Escolha uma opção:
+                </div>
+                <div className="max-h-64 overflow-y-auto pr-2 space-y-2">
+                  {message.options.map((option) => (
+                    <Button
+                      key={option.id}
+                      variant="outline"
+                      size="sm"
+                      className="justify-start text-left h-auto py-2 px-3 w-full"
+                      onClick={() => handleOptionClick(option)}
+                      disabled={sistemaInteligente.isPending}
+                    >
+                      <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
+                      <span className="text-sm">{option.text}</span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div
               className={`text-xs mt-2 ${
                 isUser ? "text-blue-100" : "text-gray-500"
@@ -167,7 +335,7 @@ export function SimpleChat() {
           {messages.map(renderMessage)}
 
           {/* Typing Indicator */}
-          {isTyping && (
+          {sistemaInteligente.isPending && (
             <div className="flex justify-start mb-6">
               <div className="flex items-start gap-3">
                 <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
@@ -175,12 +343,8 @@ export function SimpleChat() {
                 </div>
                 <div className="px-4 py-3 rounded-2xl rounded-bl-md bg-gray-100">
                   <div className="flex items-center gap-2">
-                    <div className="flex space-x-1">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></div>
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></div>
-                    </div>
-                    <span className="text-sm text-gray-600">Digitando...</span>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm text-gray-600">Analisando...</span>
                   </div>
                 </div>
               </div>
@@ -201,12 +365,12 @@ export function SimpleChat() {
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               placeholder="Ex: CEP 14940000, Como está o tempo em São Paulo?, etc..."
-              disabled={isTyping}
+              disabled={sistemaInteligente.isPending}
               className="flex-1 px-4 py-3 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
             />
             <Button
               type="submit"
-              disabled={!inputValue.trim() || isTyping}
+              disabled={!inputValue.trim() || sistemaInteligente.isPending}
               className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-full disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Send className="w-5 h-5" />
