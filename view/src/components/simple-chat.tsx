@@ -27,14 +27,14 @@ export function SimpleChat() {
     {
       id: "1",
       content:
-        "Olá. Eu sou um Chat Inteligente onde você pode consultar CEPs e saber mais sobre a Previsão do Tempo das cidades que quiser.",
+        "Olá! Eu sou um Chat Inteligente onde você pode consultar CEPs e saber mais sobre a Previsão do Tempo das cidades que quiser.",
       role: "assistant",
       timestamp: new Date(),
     },
     {
       id: "2",
       content:
-        'Comece dizendo algo como: "Endereço do CEP 14.940-000", "Como está o Tempo em São Paulo/SP?", "Tempo em Tabatinga" ou "CEP 14940000 e Previsão".',
+        '💡 **Exemplos de consultas:**\n\n📍 **CEP:** "CEP 01310-100", "14910001"\n🌤️ **Clima:** "Tempo em São Paulo", "previsao ibitinga"\n🔗 **Combinado:** "CEP 14940000 e previsão"\n\n💬 **Dica:** O sistema mantém contexto entre consultas!',
       role: "assistant",
       timestamp: new Date(),
     },
@@ -119,12 +119,32 @@ export function SimpleChat() {
         };
       }
 
-      // Para no primeiro contexto completo encontrado (últimos 10 mensagens)
-      if ((lastCepData || lastCityName) && i < messages.length - 10) {
+      // Busca cidade mencionada em mensagens de texto (para contexto)
+      if (!lastCityName && message.role === "assistant" && message.content) {
+        // Procura por padrões como "Previsão do Tempo para [Cidade]"
+        const cityMatch = message.content.match(
+          /Previsão do Tempo para ([^:]+?):/
+        );
+        if (cityMatch) {
+          const cityText = cityMatch[1].trim();
+          // Extrai cidade e estado se disponível
+          const cityStateMatch = cityText.match(/^(.+?)(?:,\s*([A-Z]{2}))?$/);
+          if (cityStateMatch) {
+            lastCityName = {
+              city: cityStateMatch[1].trim(),
+              state: cityStateMatch[2] || "",
+            };
+          }
+        }
+      }
+
+      // Para no primeiro contexto completo encontrado (últimos 15 mensagens)
+      if ((lastCepData || lastCityName) && i < messages.length - 15) {
         break;
       }
     }
 
+    console.log("🔍 Contexto extraído:", { lastCepData, lastCityName });
     return { lastCepData, lastCityName };
   };
 
@@ -182,7 +202,11 @@ export function SimpleChat() {
 
     // Se tem dados de clima, adiciona como mensagem separada
     if (response.weatherData && response.weatherData.weather?.length > 0) {
-      const weatherMessage = `🌤️ **Previsão do Tempo:**\n${response.weatherData.weather
+      const cityName = response.weatherData.city || "Cidade não informada";
+      const stateName = response.weatherData.state || "";
+      const locationText = stateName ? `${cityName}, ${stateName}` : cityName;
+
+      const weatherMessage = `🌤️ **Previsão do Tempo para ${locationText}:**\n${response.weatherData.weather
         .map(
           (day: any) =>
             `📅 ${new Date(day.date).toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" })}: ${day.conditionDescription} (${day.minimum}°C a ${day.maximum}°C)`
@@ -210,6 +234,41 @@ export function SimpleChat() {
     let userInput = inputValue.trim();
     setInputValue("");
 
+    // Comando especial para limpar contexto
+    if (
+      userInput.toLowerCase().includes("limpar") ||
+      userInput.toLowerCase().includes("reset")
+    ) {
+      addMessage(
+        "🧹 Contexto limpo! Agora posso ajudar com novas consultas.",
+        false
+      );
+      return;
+    }
+
+    // Comando para mostrar contexto atual
+    if (
+      userInput.toLowerCase().includes("contexto") ||
+      userInput.toLowerCase().includes("context")
+    ) {
+      const context = extractContext();
+      let contextMessage = "📋 **Contexto atual:**\n";
+
+      if (context.lastCepData) {
+        contextMessage += `📍 **CEP:** ${context.lastCepData.zipcode} - ${context.lastCepData.city}, ${context.lastCepData.state}\n`;
+      }
+      if (context.lastCityName) {
+        contextMessage += `🌤️ **Cidade:** ${context.lastCityName.city}, ${context.lastCityName.state}\n`;
+      }
+      if (!context.lastCepData && !context.lastCityName) {
+        contextMessage +=
+          "Nenhum contexto disponível. Faça uma consulta primeiro!";
+      }
+
+      addMessage(contextMessage, false);
+      return;
+    }
+
     // Adiciona mensagem do usuário
     addMessage(userInput, true);
 
@@ -225,8 +284,42 @@ export function SimpleChat() {
         /\b(previs[ãa]o|tempo|clima|chuva|sol|temperatura|calor|frio|nublado|ensolarado)\b/i.test(
           userInput
         );
+
+      // Função para extrair cidade da entrada do usuário
+      const extractCityFromInput = (input: string): string | null => {
+        // Padrões para extrair cidade
+        const patterns = [
+          /\b(previs[ãa]o|tempo|clima)\s+([a-záàãâäéèêëíìîïóòõôöúùûüç\s]+?)(?:\?|$|\.)/i, // "previsao ibitinga"
+          /\b([a-záàãâäéèêëíìîïóòõôöúùûüç\s]+?)\s+(?:previs[ãa]o|tempo|clima)/i, // "ibitinga previsao"
+          /\b(?:em|de|para)\s+([a-záàãâäéèêëíìîïóòõôöúùûüç\s]+?)(?:\?|$|\.)/i, // "em ibitinga"
+        ];
+
+        for (const pattern of patterns) {
+          const match = input.match(pattern);
+          if (match && match[1]) {
+            const city = match[1].trim();
+            // Remove palavras que não são cidades
+            if (
+              city.length >= 2 &&
+              !/\b(previs[ãa]o|tempo|clima|como|está|qual|quem|quando|onde|porque|por que)\b/i.test(
+                city
+              )
+            ) {
+              return city;
+            }
+          }
+        }
+        return null;
+      };
+
+      // Melhor detecção de cidade específica
+      const extractedCity = extractCityFromInput(userInput);
       const hasSpecificCity =
-        /\b(em|de|para)\s+\w+/i.test(userInput) || /\w+\/\w+/.test(userInput);
+        extractedCity !== null ||
+        /\b(em|de|para)\s+\w+/i.test(userInput) ||
+        /\w+\/\w+/.test(userInput) ||
+        /\b(previs[ãa]o|tempo|clima)\s+\w+/i.test(userInput) || // "previsao ibitinga"
+        /\b\w+\s+(?:previs[ãa]o|tempo|clima)/i.test(userInput); // "ibitinga previsao"
 
       // Detecta se o usuário está se referindo implicitamente ao contexto anterior
       const isContextualRequest =
@@ -234,6 +327,17 @@ export function SimpleChat() {
           userInput
         );
 
+      // Debug: mostra o que foi detectado
+      console.log("🔍 Análise de contexto:", {
+        userInput,
+        isWeatherQuery,
+        hasSpecificCity,
+        extractedCity,
+        isContextualRequest,
+        context,
+      });
+
+      // Só usa contexto se realmente não há cidade específica OU se é uma requisição contextual explícita
       if ((isWeatherQuery && !hasSpecificCity) || isContextualRequest) {
         if (context.lastCepData) {
           enrichedInput = `${userInput} em ${context.lastCepData.city}, ${context.lastCepData.state}`;
@@ -259,6 +363,10 @@ export function SimpleChat() {
           console.log("⚠️ Nenhum contexto encontrado para:", userInput);
           console.log("📝 Context disponível:", context);
         }
+      } else if (extractedCity) {
+        // Se uma cidade foi extraída, usa ela diretamente
+        console.log("🎯 Cidade extraída da entrada:", extractedCity);
+        enrichedInput = userInput; // Mantém a entrada original
       }
 
       // Chama o sistema inteligente
@@ -418,6 +526,19 @@ export function SimpleChat() {
               message.data.data.weather &&
               message.data.data.weather.length > 0 && (
                 <div className="mt-3 p-3 bg-white rounded border">
+                  {/* Cabeçalho com nome da cidade */}
+                  <div className="mb-3 pb-2 border-b border-gray-200">
+                    <div className="text-sm font-semibold text-gray-800">
+                      📍 {message.data.data.city || "Cidade não informada"}
+                      {message.data.data.state &&
+                        `, ${message.data.data.state}`}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      Última atualização:{" "}
+                      {message.data.data.updatedAt || "Não informado"}
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-1 gap-2 text-xs">
                     {message.data.data.weather
                       .slice(0, 3)
