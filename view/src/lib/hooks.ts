@@ -58,6 +58,26 @@ export const useOptionalUser = () => {
   });
 };
 
+// ===== CITY SEARCH & ZIPCODE HOOKS =====
+
+export const useCitySearch = () => {
+  return useMutation({
+    mutationFn: (cityName: string) => client.SEARCH_LOCALITY({ cityName }),
+  });
+};
+
+export const useZipCodeLookup = () => {
+  return useMutation({
+    mutationFn: (zipcode: string) => client.CONSULT_ZIP_CODE({ zipcode }),
+  });
+};
+
+export const useWeatherForecast = () => {
+  return useMutation({
+    mutationFn: (cityCode: number) => client.WEATHER_FORECAST({ cityCode }),
+  });
+};
+
 // ===== CHAT HOOKS =====
 
 export const useCreateConversation = () => {

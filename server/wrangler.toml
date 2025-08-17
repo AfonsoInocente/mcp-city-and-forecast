@@ -24,6 +24,21 @@ new_classes = [ "Workflow" ]
 name = "DECO_CHAT_WORKFLOW_DO"
 class_name = "Workflow"
 
+[env]
+[env.production]
+[env.production.vars]
+BRASIL_API_BASE_URL = "https://brasilapi.com.br/api"
+BRASIL_API_ZIPCODE_LOOKUP = "/cep/v1"
+BRASIL_API_WEATHER_FORECAST = "/cptec/v1/clima/previsao"
+BRASIL_API_CITY_SEARCH = "/cptec/v1/cidade"
+
+[env.development]
+[env.development.vars]
+BRASIL_API_BASE_URL = "https://brasilapi.com.br/api"
+BRASIL_API_ZIPCODE_LOOKUP = "/cep/v1"
+BRASIL_API_WEATHER_FORECAST = "/cptec/v1/clima/previsao"
+BRASIL_API_CITY_SEARCH = "/cptec/v1/cidade"
+
 [[rules]]
 type = "Text"
 globs = [ "**/*.sql" ]
