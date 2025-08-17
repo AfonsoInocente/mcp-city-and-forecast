@@ -458,7 +458,72 @@ export const createSendMessageTool = (env: Env) =>
       try {
         // Check for CEP pattern (8 digits)
         const extractedZipCode = extractZipCode(context.message);
-        if (
+        const hasWeatherRequest = hasWeatherKeyword(context.message);
+
+        // Scenario 1: CEP + Weather in same message
+        if (extractedZipCode && hasWeatherRequest) {
+          try {
+            // First get CEP data
+            const cepResponse = await fetch(
+              `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_ZIPCODE_LOOKUP || "/cep/v1"}/${extractedZipCode}`
+            );
+
+            if (cepResponse.ok) {
+              const cepData = await cepResponse.json();
+
+              // Then get weather data for the city
+              const cityResponse = await fetch(
+                `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_CITY_SEARCH || "/cptec/v1/cidade"}/${encodeURIComponent(cepData.city)}`
+              );
+
+              if (cityResponse.ok) {
+                const cities = await cityResponse.json();
+                if (cities.length > 0) {
+                  const city = cities[0];
+                  const weatherResponse = await fetch(
+                    `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_WEATHER_FORECAST || "/cptec/v1/clima/previsao"}/${city.id}`
+                  );
+
+                  if (weatherResponse.ok) {
+                    const weatherData = await weatherResponse.json();
+
+                    aiContent = `📍 **Informações do CEP ${cepData.cep}:**
+
+🏘️ **Endereço:**
+- **Logradouro:** ${cepData.street || "Não informado"}
+- **Bairro:** ${cepData.neighborhood || "Não informado"}
+- **Cidade:** ${cepData.city}
+- **Estado:** ${cepData.state}
+
+🌤️ **Previsão do Tempo para ${weatherData.cidade}, ${weatherData.estado}**
+
+📅 **Última atualização:** ${weatherData.atualizado_em || "Não informado"}
+
+📊 **Previsão dos próximos dias:**
+
+${weatherData.clima
+  .map(
+    (day: any, index: number) =>
+      `**${index === 0 ? "Hoje" : `Dia ${day.data || "N/A"}`}:**
+🌡️ Min: ${day.min || 0}°C | Max: ${day.max || 0}°C
+🌤️ ${day.condicao_desc || day.condition || "Não informado"}
+☀️ Índice UV: ${day.indice_uv || 0}`
+  )
+  .join("\n\n")}
+
+✅ Dados obtidos da API CPTEC/Brasil API`;
+                    toolUsed = true;
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            aiContent = `❌ Erro ao consultar CEP e previsão: ${error instanceof Error ? error.message : "Erro desconhecido"}`;
+            toolUsed = true;
+          }
+        }
+        // Scenario 2: Only CEP
+        else if (
           extractedZipCode ||
           inputMessage.includes("cep") ||
           inputMessage.includes("código postal") ||
@@ -492,8 +557,8 @@ export const createSendMessageTool = (env: Env) =>
             toolUsed = true;
           }
         }
-        // Check for weather/climate queries
-        else if (hasWeatherKeyword(context.message)) {
+        // Scenario 3: Only Weather
+        else if (hasWeatherRequest) {
           // Enhanced city extraction with multiple patterns
           let cityName = null;
           let stateName = null;
