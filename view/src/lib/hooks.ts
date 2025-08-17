@@ -1,24 +1,28 @@
 import { client } from "./rpc";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { TOOL_IDS } from "../../../common/index.ts";
 
 // ===== CITY SEARCH & ZIPCODE HOOKS =====
 
 export const useCitySearch = () => {
   return useMutation({
-    mutationFn: (cityName: string) => client.SEARCH_LOCALITY({ cityName }),
+    mutationFn: (cityName: string) =>
+      (client as any)[TOOL_IDS.CITY_SEARCH]({ cityName }),
   });
 };
 
 export const useZipCodeLookup = () => {
   return useMutation({
-    mutationFn: (zipcode: string) => client.CONSULT_ZIP_CODE({ zipcode }),
+    mutationFn: (zipcode: string) =>
+      (client as any)[TOOL_IDS.ZIP_CODE_LOOKUP]({ zipcode }),
   });
 };
 
 export const useWeatherForecast = () => {
   return useMutation({
-    mutationFn: (cityCode: number) => client.WEATHER_FORECAST({ cityCode }),
+    mutationFn: (cityCode: number) =>
+      (client as any)[TOOL_IDS.WEATHER_FORECAST]({ cityCode }),
   });
 };
 

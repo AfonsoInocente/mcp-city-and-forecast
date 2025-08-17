@@ -16,6 +16,17 @@ import {
   extractBestCityName,
   extractCityAndState,
   WEATHER_QUERY_PATTERNS,
+  ACTIONS,
+  TOOL_IDS,
+  CitySearchRequestSchema,
+  CitySearchResponseSchema,
+  ZipCodeRequestSchema,
+  ZipCodeResponseSchema,
+  WeatherForecastRequestSchema,
+  WeatherForecastResponseSchema,
+  IntelligentWorkflowRequestSchema,
+  IntelligentWorkflowResponseSchema,
+  CityLocationSchema,
 } from "../common/index.ts";
 import { createPrivateTool, createTool } from "@deco/workers-runtime/mastra";
 import { z } from "zod";
@@ -28,23 +39,11 @@ import { eq, desc } from "drizzle-orm";
 
 export const createCitySearchTool = (env: Env) =>
   createTool({
-    id: "SEARCH_LOCALITY",
+    id: TOOL_IDS.CITY_SEARCH,
     description:
       "Busca localidades (cidades) através do nome usando a API CPTEC da Brasil API",
-    inputSchema: z.object({
-      cityName: z
-        .string()
-        .min(2, "Nome da cidade deve ter pelo menos 2 caracteres"),
-    }),
-    outputSchema: z.object({
-      locations: z.array(
-        z.object({
-          id: z.number(),
-          name: z.string(),
-          state: z.string(),
-        })
-      ),
-    }),
+    inputSchema: CitySearchRequestSchema,
+    outputSchema: CitySearchResponseSchema,
     execute: async ({ context }) => {
       const { cityName } = context;
 
@@ -101,29 +100,11 @@ export const createCitySearchTool = (env: Env) =>
 
 export const createWeatherForecastTool = (env: Env) =>
   createTool({
-    id: "WEATHER_FORECAST",
+    id: TOOL_IDS.WEATHER_FORECAST,
     description:
       "Consulta previsão do tempo para uma cidade usando a API CPTEC da Brasil API",
-    inputSchema: z.object({
-      cityCode: z
-        .number()
-        .min(1, "Código da cidade deve ser um número positivo"),
-    }),
-    outputSchema: z.object({
-      city: z.string(),
-      state: z.string(),
-      updatedAt: z.string(),
-      weather: z.array(
-        z.object({
-          date: z.string(),
-          condition: z.string(),
-          conditionDescription: z.string(),
-          minimum: z.number(),
-          maximum: z.number(),
-          uvIndex: z.number(),
-        })
-      ),
-    }),
+    inputSchema: WeatherForecastRequestSchema,
+    outputSchema: WeatherForecastResponseSchema,
     execute: async ({ context }) => {
       const { cityCode } = context;
 
@@ -193,25 +174,11 @@ export const createWeatherForecastTool = (env: Env) =>
 
 export const createZipCodeLookupTool = (env: Env) =>
   createTool({
-    id: "CONSULT_ZIP_CODE",
+    id: TOOL_IDS.ZIP_CODE_LOOKUP,
     description:
       "Consulta informações de endereço através do CEP usando a Brasil API",
-    inputSchema: z.object({
-      zipcode: z.string().transform((val) => {
-        const cleaned = val.replace(/\D/g, "");
-        if (cleaned.length !== 8) {
-          throw new Error("CEP deve conter exatamente 8 dígitos numéricos");
-        }
-        return cleaned;
-      }),
-    }),
-    outputSchema: z.object({
-      zipcode: z.string(),
-      state: z.string(),
-      city: z.string(),
-      neighborhood: z.string(),
-      street: z.string(),
-    }),
+    inputSchema: ZipCodeRequestSchema,
+    outputSchema: ZipCodeResponseSchema,
     execute: async ({ context }) => {
       const { zipcode } = context;
 
@@ -260,6 +227,253 @@ export const createZipCodeLookupTool = (env: Env) =>
 
         throw new Error("Erro interno do servidor");
       }
+    },
+  });
+
+// ===== SISTEMA INTELIGENTE TOOL =====
+
+export const createSistemaInteligenteTool = (env: Env) =>
+  createTool({
+    id: "SISTEMA_INTELIGENTE",
+    description: "Sistema inteligente para consulta de CEP e previsão do tempo",
+    inputSchema: IntelligentWorkflowRequestSchema,
+    outputSchema: IntelligentWorkflowResponseSchema,
+    execute: async ({ context }) => {
+      const { userInput } = context;
+
+      // Análise da entrada do usuário
+      const inputMessage = userInput.toLowerCase();
+      let initialMessage = "";
+      let finalMessage = "";
+      let executedAction = "";
+      let action = "";
+      let zipCodeData = null;
+      let weatherData = null;
+      let citiesFound = null;
+
+      try {
+        // Extrair CEP e verificar se há pedido de clima
+        const extractedZipCode = extractZipCode(userInput);
+        const hasWeatherRequest = hasWeatherKeyword(userInput);
+
+        // Cenário 1: CEP + Weather na mesma mensagem
+        if (extractedZipCode && hasWeatherRequest) {
+          try {
+            // Primeiro buscar dados do CEP
+            const cepResponse = await fetch(
+              `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_ZIPCODE_LOOKUP || "/cep/v1"}/${extractedZipCode}`
+            );
+
+            if (cepResponse.ok) {
+              const cepData = await cepResponse.json();
+              zipCodeData = {
+                zipcode: cepData.cep,
+                state: cepData.state,
+                city: cepData.city,
+                neighborhood: cepData.neighborhood || "Não informado",
+                street: cepData.street || "Não informado",
+              };
+
+              // Depois buscar dados do clima para a cidade
+              const cityResponse = await fetch(
+                `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_CITY_SEARCH || "/cptec/v1/cidade"}/${encodeURIComponent(cepData.city)}`
+              );
+
+              if (cityResponse.ok) {
+                const cities = await cityResponse.json();
+                if (cities.length > 0) {
+                  const city = cities[0];
+                  const weatherResponse = await fetch(
+                    `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_WEATHER_FORECAST || "/cptec/v1/clima/previsao"}/${city.id}`
+                  );
+
+                  if (weatherResponse.ok) {
+                    const weatherApiData = await weatherResponse.json();
+                    weatherData = {
+                      city: weatherApiData.cidade,
+                      state: weatherApiData.estado,
+                      updatedAt:
+                        weatherApiData.atualizado_em || "Não informado",
+                      weather: weatherApiData.clima.map((day: any) => ({
+                        date: day.data || "Não informado",
+                        condition: day.condition || "Não informado",
+                        conditionDescription:
+                          day.condicao_desc || "Não informado",
+                        minimum: day.min || 0,
+                        maximum: day.max || 0,
+                        uvIndex: day.indice_uv || 0,
+                      })),
+                    };
+
+                    action = ACTIONS.CONSULT_ZIP_CODE_AND_WEATHER;
+                    executedAction = "Consulta de CEP e previsão do tempo";
+                    initialMessage =
+                      "✅ Consultei tanto o CEP quanto a previsão do tempo!";
+                    finalMessage = "Dados obtidos com sucesso da Brasil API.";
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            action = ACTIONS.OUT_OF_SCOPE;
+            executedAction = "Erro na consulta";
+            initialMessage = `❌ Erro ao consultar CEP e previsão: ${error instanceof Error ? error.message : "Erro desconhecido"}`;
+            finalMessage = "Tente novamente ou consulte um CEP válido.";
+          }
+        }
+        // Cenário 2: Apenas CEP
+        else if (extractedZipCode) {
+          try {
+            const response = await fetch(
+              `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_ZIPCODE_LOOKUP || "/cep/v1"}/${extractedZipCode}`
+            );
+            if (response.ok) {
+              const data = await response.json();
+              zipCodeData = {
+                zipcode: data.cep,
+                state: data.state,
+                city: data.city,
+                neighborhood: data.neighborhood || "Não informado",
+                street: data.street || "Não informado",
+              };
+
+              action = ACTIONS.CONSULT_ZIP_CODE;
+              executedAction = "Consulta de CEP";
+              initialMessage = "✅ Encontrei as informações do CEP!";
+              finalMessage = "Dados obtidos da Brasil API.";
+            }
+          } catch (error) {
+            action = ACTIONS.OUT_OF_SCOPE;
+            executedAction = "Erro na consulta de CEP";
+            initialMessage = `❌ Erro ao consultar o CEP: ${error instanceof Error ? error.message : "Erro desconhecido"}`;
+            finalMessage = "Verifique se o CEP está correto e tente novamente.";
+          }
+        }
+        // Cenário 3: Apenas previsão do tempo
+        else if (hasWeatherRequest) {
+          const cityAndState = extractCityAndState(userInput);
+          let cityName = null;
+          let stateName = null;
+
+          if (cityAndState) {
+            cityName = cityAndState.city;
+            stateName = cityAndState.state;
+          } else {
+            cityName = extractBestCityName(userInput);
+          }
+
+          if (cityName) {
+            try {
+              const cityResponse = await fetch(
+                `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_CITY_SEARCH || "/cptec/v1/cidade"}/${encodeURIComponent(cityName)}`
+              );
+              if (cityResponse.ok) {
+                let cities = await cityResponse.json();
+
+                // Filtrar por estado se especificado
+                if (stateName && cities.length > 0) {
+                  const filteredCities = cities.filter(
+                    (city: any) =>
+                      city.estado === stateName ||
+                      city.estado.toLowerCase() === stateName.toLowerCase()
+                  );
+                  if (filteredCities.length > 0) {
+                    cities = filteredCities;
+                  }
+                }
+
+                if (cities.length > 0) {
+                  // Múltiplas cidades encontradas
+                  if (cities.length > 1 && !stateName) {
+                    citiesFound = cities.slice(0, 5).map((city: any) => ({
+                      id: city.id,
+                      name: city.nome,
+                      state: city.estado,
+                    }));
+
+                    action = ACTIONS.MULTIPLE_CITIES;
+                    executedAction = "Múltiplas cidades encontradas";
+                    initialMessage = `🏙️ Encontrei várias cidades chamadas "${cityName}". Qual você deseja?`;
+                    finalMessage =
+                      "Por favor, seja mais específico ou mencione o estado.";
+                  } else {
+                    // Cidade única - buscar previsão
+                    const city = cities[0];
+                    const weatherResponse = await fetch(
+                      `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_WEATHER_FORECAST || "/cptec/v1/clima/previsao"}/${city.id}`
+                    );
+                    if (weatherResponse.ok) {
+                      const weatherApiData = await weatherResponse.json();
+                      weatherData = {
+                        city: weatherApiData.cidade,
+                        state: weatherApiData.estado,
+                        updatedAt:
+                          weatherApiData.atualizado_em || "Não informado",
+                        weather: weatherApiData.clima.map((day: any) => ({
+                          date: day.data || "Não informado",
+                          condition: day.condition || "Não informado",
+                          conditionDescription:
+                            day.condicao_desc || "Não informado",
+                          minimum: day.min || 0,
+                          maximum: day.max || 0,
+                          uvIndex: day.indice_uv || 0,
+                        })),
+                      };
+
+                      action = ACTIONS.CONSULT_WEATHER_DIRECT;
+                      executedAction = "Consulta de previsão do tempo";
+                      initialMessage = "🌤️ Encontrei a previsão do tempo!";
+                      finalMessage = "Dados obtidos da API CPTEC/Brasil API.";
+                    }
+                  }
+                } else {
+                  action = ACTIONS.CITY_NOT_FOUND;
+                  executedAction = "Cidade não encontrada";
+                  initialMessage = `❌ Não foi possível encontrar dados de previsão do tempo para "${cityName}".`;
+                  finalMessage =
+                    "Tente com o nome completo da cidade ou verifique a grafia.";
+                }
+              }
+            } catch (error) {
+              action = ACTIONS.OUT_OF_SCOPE;
+              executedAction = "Erro na consulta de clima";
+              initialMessage = `❌ Erro ao consultar previsão do tempo: ${error instanceof Error ? error.message : "Erro desconhecido"}`;
+              finalMessage = "Tente novamente ou verifique o nome da cidade.";
+            }
+          } else {
+            action = ACTIONS.REQUEST_LOCATION;
+            executedAction = "Solicitação de localização";
+            initialMessage =
+              "🌤️ Para consultar a previsão do tempo, preciso saber a cidade.";
+            finalMessage =
+              "Por favor, informe o nome da cidade (ex: 'São Paulo', 'Rio de Janeiro').";
+          }
+        }
+        // Cenário 4: Fora do escopo
+        else {
+          action = ACTIONS.OUT_OF_SCOPE;
+          executedAction = "Consulta fora do escopo";
+          initialMessage =
+            "🤔 Não consegui identificar uma consulta de CEP ou previsão do tempo.";
+          finalMessage =
+            "Tente algo como: 'CEP 01310100' ou 'Tempo em São Paulo'.";
+        }
+      } catch (error) {
+        action = ACTIONS.OUT_OF_SCOPE;
+        executedAction = "Erro interno";
+        initialMessage = "❌ Ocorreu um erro interno.";
+        finalMessage = "Tente novamente em alguns instantes.";
+      }
+
+      return {
+        initialMessage,
+        executedAction,
+        finalMessage,
+        action,
+        zipCodeData,
+        weatherData,
+        citiesFound,
+      };
     },
   });
 
@@ -833,6 +1047,8 @@ export const tools = [
   createCitySearchTool,
   createWeatherForecastTool,
   createZipCodeLookupTool,
+  // Sistema Inteligente
+  createSistemaInteligenteTool,
   // Chat Tools
   createCreateConversationTool,
   createListConversationsTool,
