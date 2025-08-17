@@ -3,7 +3,7 @@ name = "mcp-previsao"
 main = "main.ts"
 compatibility_date = "2025-06-17"
 compatibility_flags = [ "nodejs_compat" ]
-scope = "kmute"
+scope = "superafonso"
 
 [assets]
 directory = "./view-build"
