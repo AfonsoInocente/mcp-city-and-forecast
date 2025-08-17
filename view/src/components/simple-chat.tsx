@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Send, Bot, User, MapPin, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useSistemaInteligente } from "../lib/hooks";
-import { ACTIONS } from "../../../common/index";
+import { ACTIONS, TOOL_IDS } from "../../../common/index";
+import { client } from "../lib/rpc";
 
 interface Message {
   id: string;
@@ -33,12 +34,13 @@ export function SimpleChat() {
     {
       id: "2",
       content:
-        'Comece dizendo algo como: "Endereço do CEP 14.940-000" ou, "Como está o Tempo em São Paulo/SP?" ou "CEP 14940000 e Previsão".',
+        'Comece dizendo algo como: "Endereço do CEP 14.940-000", "Como está o Tempo em São Paulo/SP?", "Tempo em Tabatinga" ou "CEP 14940000 e Previsão".',
       role: "assistant",
       timestamp: new Date(),
     },
   ]);
   const [inputValue, setInputValue] = useState("");
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sistemaInteligente = useSistemaInteligente();
@@ -78,9 +80,79 @@ export function SimpleChat() {
     setMessages((prev) => [...prev, newMessage]);
   };
 
+  // Extrai contexto das mensagens anteriores
+  const extractContext = () => {
+    let lastCepData = null;
+    let lastCityName = null;
+
+    // Percorre as mensagens de trás para frente procurando por contexto
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+
+      // Busca dados de CEP nas mensagens anteriores
+      if (message.data?.type === "zipCode" && !lastCepData) {
+        lastCepData = {
+          city: message.data.data.city,
+          state: message.data.data.state,
+          zipcode: message.data.data.zipcode,
+        };
+      }
+
+      // Busca dados de clima nas mensagens anteriores
+      if (message.data?.type === "weather" && !lastCityName) {
+        lastCityName = {
+          city: message.data.data.city,
+          state: message.data.data.state,
+        };
+      }
+
+      // Para no primeiro contexto completo encontrado (últimos 10 mensagens)
+      if ((lastCepData || lastCityName) && i < messages.length - 10) {
+        break;
+      }
+    }
+
+    return { lastCepData, lastCityName };
+  };
+
   // Processa resposta do sistema inteligente
   const processAIResponse = (response: any) => {
-    // Mensagem inicial
+    console.log("🔍 Processando resposta:", response);
+
+    // Se há múltiplas cidades, prioriza isso e mostra as opções
+    if (response.action === ACTIONS.MULTIPLE_CITIES && response.citiesFound) {
+      console.log("🏙️ Múltiplas cidades encontradas:", response.citiesFound);
+
+      // Mensagem inicial
+      addMessage(response.initialMessage, false);
+
+      // Cria opções para o usuário escolher
+      const options = response.citiesFound.map((city: any) => ({
+        id: city.id.toString(),
+        text: `${city.name}/${city.state}`,
+        value: city.name,
+        cityId: city.id,
+      }));
+
+      // Adiciona mensagem com opções clicáveis
+      addMessage("📍 Escolha uma cidade:", false, undefined, options);
+
+      // Não adiciona mensagem final quando há opções para escolher
+      return;
+    }
+
+    // Se é uma consulta contextual, indica que o contexto pode ajudar
+    if (response.action === ACTIONS.CONTEXT_QUERY) {
+      console.log("🔍 Consulta contextual detectada");
+      addMessage(response.initialMessage, false);
+      addMessage(
+        "💡 Dica: Use expressões como 'Tempo em [cidade]' ou consulte um CEP primeiro.",
+        false
+      );
+      return;
+    }
+
+    // Mensagem inicial (para outros casos)
     addMessage(response.initialMessage, false);
 
     // Se tem dados de CEP, adiciona como mensagem separada
@@ -106,18 +178,6 @@ export function SimpleChat() {
       });
     }
 
-    // Se há múltiplas cidades, adiciona opções
-    if (response.action === ACTIONS.MULTIPLE_CITIES && response.citiesFound) {
-      const options = response.citiesFound.map((city: any) => ({
-        id: city.id.toString(),
-        text: `${city.name}/${city.state}`,
-        value: city.name,
-        cityId: city.id,
-      }));
-
-      addMessage("Escolha uma cidade:", false, undefined, options);
-    }
-
     // Mensagem final (se diferente da inicial)
     if (response.finalMessage !== response.initialMessage) {
       addMessage(response.finalMessage, false);
@@ -128,17 +188,67 @@ export function SimpleChat() {
     e.preventDefault();
     if (!inputValue.trim() || sistemaInteligente.isPending) return;
 
-    const userInput = inputValue.trim();
+    let userInput = inputValue.trim();
     setInputValue("");
 
     // Adiciona mensagem do usuário
     addMessage(userInput, true);
 
     try {
+      // Extrai contexto das mensagens anteriores
+      const context = extractContext();
+
+      // Enriquece a entrada do usuário com contexto se necessário
+      let enrichedInput = userInput;
+
+      // Se a mensagem parece ser sobre previsão do tempo mas não tem cidade específica
+      const isWeatherQuery =
+        /\b(previs[ãa]o|tempo|clima|chuva|sol|temperatura|calor|frio|nublado|ensolarado)\b/i.test(
+          userInput
+        );
+      const hasSpecificCity =
+        /\b(em|de|para)\s+\w+/i.test(userInput) || /\w+\/\w+/.test(userInput);
+
+      // Detecta se o usuário está se referindo implicitamente ao contexto anterior
+      const isContextualRequest =
+        /\b(a[íi]|l[áa]|dessa|desta|desse|deste|aqui|ali|mesmo|mesma)\b/i.test(
+          userInput
+        );
+
+      if ((isWeatherQuery && !hasSpecificCity) || isContextualRequest) {
+        if (context.lastCepData) {
+          enrichedInput = `${userInput} em ${context.lastCepData.city}, ${context.lastCepData.state}`;
+          console.log("🔄 Enriquecido com contexto de CEP:", enrichedInput);
+          console.log("📊 Dados do contexto CEP:", context.lastCepData);
+
+          // Adiciona indicação de que está usando contexto
+          addMessage(
+            `💡 *Usando contexto: ${context.lastCepData.city}, ${context.lastCepData.state} (CEP ${context.lastCepData.zipcode})*`,
+            false
+          );
+        } else if (context.lastCityName) {
+          enrichedInput = `${userInput} em ${context.lastCityName.city}, ${context.lastCityName.state}`;
+          console.log("🔄 Enriquecido com contexto de cidade:", enrichedInput);
+          console.log("📊 Dados do contexto cidade:", context.lastCityName);
+
+          // Adiciona indicação de que está usando contexto
+          addMessage(
+            `💡 *Usando contexto: ${context.lastCityName.city}, ${context.lastCityName.state}*`,
+            false
+          );
+        } else {
+          console.log("⚠️ Nenhum contexto encontrado para:", userInput);
+          console.log("📝 Context disponível:", context);
+        }
+      }
+
       // Chama o sistema inteligente
+      console.log("📤 Enviando para sistema inteligente:", enrichedInput);
       const response = await sistemaInteligente.mutateAsync({
-        userInput,
+        userInput: enrichedInput,
       });
+
+      console.log("📥 Resposta do sistema inteligente:", response);
 
       // Processa a resposta
       processAIResponse(response);
@@ -164,13 +274,42 @@ export function SimpleChat() {
     addMessage(`Escolhi: ${option.text}`, true);
 
     try {
-      // Usa o sistema inteligente para processar a seleção da cidade
-      const response = await sistemaInteligente.mutateAsync({
-        userInput: `previsão do tempo em ${option.value}`,
-      });
+      // Se tem cityId, busca a previsão do tempo diretamente
+      if (option.cityId) {
+        console.log("🌤️ Buscando previsão para cidade ID:", option.cityId);
 
-      // Processa a resposta
-      processAIResponse(response);
+        const forecastData = await (client as any)[TOOL_IDS.WEATHER_FORECAST]({
+          cityCode: option.cityId,
+        });
+
+        if (forecastData.weather && forecastData.weather.length > 0) {
+          const weatherMessage = `🌤️ **Previsão do Tempo para ${option.text}:**\n${forecastData.weather
+            .map(
+              (day: any) =>
+                `📅 ${new Date(day.date).toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" })}: ${day.conditionDescription} (${day.minimum}°C a ${day.maximum}°C)`
+            )
+            .join("\n")}`;
+
+          addMessage(weatherMessage, false, {
+            type: "weather",
+            data: forecastData,
+          });
+
+          addMessage("✅ Previsão obtida com sucesso!", false);
+        } else {
+          addMessage(
+            `⚠️ Previsão do tempo não disponível para ${option.text}.`,
+            false
+          );
+        }
+      } else {
+        // Se não tem cityId, processa como entrada normal via sistema inteligente
+        const response = await sistemaInteligente.mutateAsync({
+          userInput: `previsão do tempo em ${option.value}`,
+        });
+
+        processAIResponse(response);
+      }
     } catch (error: any) {
       console.error("Erro ao processar opção:", error);
       addMessage(
@@ -278,15 +417,18 @@ export function SimpleChat() {
             {message.options && message.options.length > 0 && (
               <div className="mt-3 space-y-2">
                 <div className="text-xs text-gray-600 mb-2">
-                  Escolha uma opção:
+                  Escolha uma opção ({message.options.length} cidades
+                  encontradas):
                 </div>
-                <div className="max-h-64 overflow-y-auto pr-2 space-y-2">
+
+                {/* Lista com barra de rolagem */}
+                <div className="max-h-80 overflow-y-auto pr-2 space-y-2 border border-gray-200 rounded-md p-3 bg-gray-50">
                   {message.options.map((option) => (
                     <Button
                       key={option.id}
                       variant="outline"
                       size="sm"
-                      className="justify-start text-left h-auto py-2 px-3 w-full"
+                      className="justify-start text-left h-auto py-2 px-3 w-full hover:bg-blue-50 hover:border-blue-300"
                       onClick={() => handleOptionClick(option)}
                       disabled={sistemaInteligente.isPending}
                     >
@@ -364,7 +506,7 @@ export function SimpleChat() {
               type="text"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              placeholder="Ex: CEP 14940000, Como está o tempo em São Paulo?, etc..."
+              placeholder="Ex: CEP 14940000, Como está o tempo em São Paulo?, Tempo em Tabatinga, etc..."
               disabled={sistemaInteligente.isPending}
               className="flex-1 px-4 py-3 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
             />

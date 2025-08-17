@@ -57,15 +57,15 @@ export const extractBestCityName = (input: string): string | null => {
   // Primeiro, tenta padrões específicos de busca de cidade
   const cityPatterns = [
     // Padrão: "clima em [cidade]" ou "tempo em [cidade]"
-    /(?:clima|tempo)\s+(?:em|para|de|do|da)\s+([A-Za-zÀ-ÿ\s]+?)(?:\?|\.|$)/i,
+    /(?:clima|tempo)\s+(?:em|para|de|do|da)\s+([A-Za-zÀ-ÿ\s]+?)(?:\?|\.|$|,)/i,
     // Padrão: "previsao em [cidade]" ou "previsão em [cidade]"
-    /(?:previsao|previsão)\s+(?:em|para|de|do|da)\s+([A-Za-zÀ-ÿ\s]+?)(?:\?|\.|$)/i,
-    // Padrão: "em [cidade]"
-    /(?:em|para|de|do|da)\s+([A-Za-zÀ-ÿ\s]+?)(?:\?|\.|$)/i,
-    // Padrão: "previsao [cidade]" (sem preposição)
-    /(?:previsao|previsão)\s+([A-Za-zÀ-ÿ\s]+?)(?:\?|\.|$)/i,
-    // Padrão: "tempo [cidade]"
-    /(?:tempo|clima)\s+([A-Za-zÀ-ÿ\s]+?)(?:\?|\.|$)/i,
+    /(?:previsao|previsão)\s+(?:em|para|de|do|da)\s+([A-Za-zÀ-ÿ\s]+?)(?:\?|\.|$|,)/i,
+    // Padrão: "previsao [cidade]" (sem preposição) - captura cidade completa
+    /(?:previsao|previsão)\s+([A-Za-zÀ-ÿ\s]+?)(?:\?|\.|$|,)/i,
+    // Padrão: "tempo [cidade]" (sem preposição) - captura cidade completa
+    /(?:tempo|clima)\s+([A-Za-zÀ-ÿ\s]+?)(?:\?|\.|$|,)/i,
+    // Padrão: "em [cidade]" (deve ser o último para não interferir)
+    /(?:em|para|de|do|da)\s+([A-Za-zÀ-ÿ\s]+?)(?:\?|\.|$|,)/i,
   ];
 
   for (const pattern of cityPatterns) {
@@ -126,17 +126,27 @@ export const cleanCityName = (input: string): string => {
 export const extractCityAndState = (
   input: string
 ): { city: string; state: string } | null => {
-  // Padrão para detectar cidade, estado
-  const cityStatePattern =
-    /([a-záàãâäéèêëíìîïóòõôöúùûüç\s]+?)(?:,\s*|\s+)([A-Z]{2})(?:\?|$|\.)/i;
-  const match = input.match(cityStatePattern);
+  // Padrão para detectar cidade, estado - melhorado para capturar casos como "previsao em Ibitinga, SP"
+  const cityStatePatterns = [
+    // Padrão: "previsao em Cidade, UF" ou "tempo em Cidade, UF" ou "temperatura em Cidade, UF"
+    /(?:previsao|previsão|tempo|clima|temperatura)\s+(?:em|para|de|do|da)\s+([A-Za-zÀ-ÿ\s]+?)(?:,\s*|\s+)([A-Z]{2})(?:\?|$|\.)/i,
+    // Padrão padrão: "Cidade, UF" ou "Cidade UF"
+    /([A-Za-zÀ-ÿ\s]+?)(?:,\s*|\s+)([A-Z]{2})(?:\?|$|\.)/i,
+  ];
 
-  if (match) {
-    const city = match[1].trim();
-    const state = match[2].toUpperCase();
+  for (const pattern of cityStatePatterns) {
+    const match = input.match(pattern);
+    if (match) {
+      const city = match[1].trim();
+      const state = match[2].toUpperCase();
 
-    if (isValidCityName(city)) {
-      return { city, state };
+      // Remove pontuação da cidade
+      const cleanCity = city.replace(/[?!.,;:]/g, "").trim();
+
+      if (cleanCity.length >= 2 && isValidCityName(cleanCity)) {
+        console.log("🔍 City and State extracted:", { city: cleanCity, state });
+        return { city: cleanCity, state };
+      }
     }
   }
 

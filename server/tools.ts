@@ -115,39 +115,86 @@ export const createGenerateTodoWithAITool = (env: Env) =>
     execute: async () => {
       const db = await getDb(env);
 
-      // Como não temos acesso garantido ao DECO_CHAT_WORKSPACE_API no modo público,
-      // vamos gerar um TODO mock para manter compatibilidade
-      const mockTodoTitles = [
-        "Organizar a mesa de trabalho",
-        "Aprender algo novo hoje",
-        "Fazer uma pausa para o café",
-        "Revisar emails importantes",
-        "Planejar o fim de semana",
-        "Atualizar lista de tarefas",
-        "Fazer exercícios de respiração",
-        "Organizar arquivos digitais",
-        "Ler um artigo interessante",
-        "Fazer networking profissional",
-      ];
+      try {
+        console.log("🤖 Testando IA para gerar TODO...");
 
-      const randomTitle =
-        mockTodoTitles[Math.floor(Math.random() * mockTodoTitles.length)];
+        const generatedTodo =
+          await env.DECO_CHAT_WORKSPACE_API.AI_GENERATE_OBJECT({
+            model: "openai:gpt-4o-mini",
+            messages: [
+              {
+                role: "user",
+                content:
+                  "Generate a funny TODO title that i can add to my TODO list! Keep it short and sweet, a maximum of 10 words.",
+              },
+            ],
+            temperature: 0.9,
+            schema: {
+              type: "object",
+              properties: {
+                title: {
+                  type: "string",
+                  description: "The title of the todo",
+                },
+              },
+              required: ["title"],
+            },
+          });
 
-      const todo = await db
-        .insert(todosTable)
-        .values({
-          title: randomTitle,
-          completed: 0,
-        })
-        .returning({ id: todosTable.id });
+        console.log("✅ IA funcionou! Resposta:", generatedTodo.object);
 
-      return {
-        todo: {
-          id: todo[0].id,
-          title: randomTitle,
-          completed: false,
-        },
-      };
+        const generatedTodoTitle = String(generatedTodo.object?.title);
+
+        if (!generatedTodoTitle) {
+          throw new Error("Failed to generate todo");
+        }
+
+        const todo = await db
+          .insert(todosTable)
+          .values({
+            title: generatedTodoTitle,
+            completed: 0,
+          })
+          .returning({ id: todosTable.id });
+
+        return {
+          todo: {
+            id: todo[0].id,
+            title: generatedTodoTitle,
+            completed: false,
+          },
+        };
+      } catch (error) {
+        console.log("❌ Erro na IA:", error);
+
+        // Fallback para mock se a IA falhar
+        const mockTodoTitles = [
+          "Organizar a mesa de trabalho",
+          "Aprender algo novo hoje",
+          "Fazer uma pausa para o café",
+          "Revisar emails importantes",
+          "Planejar o fim de semana",
+        ];
+
+        const randomTitle =
+          mockTodoTitles[Math.floor(Math.random() * mockTodoTitles.length)];
+
+        const todo = await db
+          .insert(todosTable)
+          .values({
+            title: randomTitle,
+            completed: 0,
+          })
+          .returning({ id: todosTable.id });
+
+        return {
+          todo: {
+            id: todo[0].id,
+            title: randomTitle,
+            completed: false,
+          },
+        };
+      }
     },
   });
 
@@ -230,6 +277,404 @@ export const createDeleteTodoTool = (env: Env) =>
         success: true,
         deletedId: context.id,
       };
+    },
+  });
+
+// ===== TESTE IA SIMPLES =====
+
+export const createTestAITool = (env: Env) =>
+  createTool({
+    id: "TEST_AI",
+    description: "Teste simples de conversa com IA",
+    inputSchema: z.object({
+      message: z.string().optional(),
+    }),
+    outputSchema: z.object({
+      response: z.string(),
+      success: z.boolean(),
+    }),
+    execute: async ({ context }) => {
+      try {
+        console.log("🤖 Testando IA simples...");
+
+        // Teste com timeout mais longo e retry
+        const aiPromise = env.DECO_CHAT_WORKSPACE_API.AI_GENERATE({
+          model: "openai:gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: context.message || "Diga apenas 'Olá! IA funcionando!'",
+            },
+          ],
+          temperature: 0.1,
+          maxTokens: 50,
+        });
+
+        // Timeout de 30 segundos
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("AI timeout - 30s")), 30000);
+        });
+
+        const aiResponse = (await Promise.race([
+          aiPromise,
+          timeoutPromise,
+        ])) as any;
+
+        console.log("✅ IA simples funcionou! Resposta:", aiResponse.text);
+
+        return {
+          response: aiResponse.text || "IA não retornou resposta",
+          success: true,
+        };
+      } catch (error) {
+        console.log("❌ Erro na IA simples:", error);
+
+        return {
+          response: `Erro na IA: ${error instanceof Error ? error.message : "Erro desconhecido"}`,
+          success: false,
+        };
+      }
+    },
+  });
+
+// ===== TESTE IA COM SCHEMA (SEM BANCO) =====
+
+export const createTestAISchemaTool = (env: Env) =>
+  createTool({
+    id: "TEST_AI_SCHEMA",
+    description: "Teste IA com schema JSON (sem banco de dados)",
+    inputSchema: z.object({
+      prompt: z.string().optional(),
+    }),
+    outputSchema: z.object({
+      result: z.object({
+        title: z.string(),
+        description: z.string(),
+        priority: z.string(),
+      }),
+      success: z.boolean(),
+    }),
+    execute: async ({ context }) => {
+      try {
+        console.log("🤖 Testando IA com schema...");
+
+        const aiResponse = await env.DECO_CHAT_WORKSPACE_API.AI_GENERATE_OBJECT(
+          {
+            model: "openai:gpt-4o-mini",
+            messages: [
+              {
+                role: "user",
+                content:
+                  context.prompt ||
+                  "Crie uma tarefa simples para minha lista de TODO",
+              },
+            ],
+            schema: {
+              type: "object",
+              properties: {
+                title: {
+                  type: "string",
+                  description: "Título da tarefa",
+                },
+                description: {
+                  type: "string",
+                  description: "Descrição da tarefa",
+                },
+                priority: {
+                  type: "string",
+                  enum: ["baixa", "média", "alta"],
+                  description: "Prioridade da tarefa",
+                },
+              },
+              required: ["title", "description", "priority"],
+            },
+            temperature: 0.7,
+          }
+        );
+
+        console.log("✅ IA com schema funcionou! Resposta:", aiResponse.object);
+
+        return {
+          result: aiResponse.object as any,
+          success: true,
+        };
+      } catch (error) {
+        console.log("❌ Erro na IA com schema:", error);
+
+        return {
+          result: {
+            title: "Tarefa de teste",
+            description: "Descrição de teste",
+            priority: "média",
+          },
+          success: false,
+        };
+      }
+    },
+  });
+
+// ===== TESTE CONECTIVIDADE IA =====
+
+export const createTestAIConnectivityTool = (env: Env) =>
+  createTool({
+    id: "TEST_AI_CONNECTIVITY",
+    description: "Teste básico de conectividade com IA (sem chamada real)",
+    inputSchema: z.object({}),
+    outputSchema: z.object({
+      hasIntegration: z.boolean(),
+      hasAIGenerate: z.boolean(),
+      hasAIGenerateObject: z.boolean(),
+      integrationType: z.string(),
+      success: z.boolean(),
+    }),
+    execute: async () => {
+      try {
+        console.log("🔍 Testando conectividade com IA...");
+
+        // Verifica se a integração existe
+        const hasIntegration = !!env.DECO_CHAT_WORKSPACE_API;
+        const hasAIGenerate = !!env.DECO_CHAT_WORKSPACE_API?.AI_GENERATE;
+        const hasAIGenerateObject =
+          !!env.DECO_CHAT_WORKSPACE_API?.AI_GENERATE_OBJECT;
+
+        console.log("📊 Status da integração:", {
+          hasIntegration,
+          hasAIGenerate,
+          hasAIGenerateObject,
+        });
+
+        return {
+          hasIntegration,
+          hasAIGenerate,
+          hasAIGenerateObject,
+          integrationType: typeof env.DECO_CHAT_WORKSPACE_API,
+          success: hasIntegration && hasAIGenerate && hasAIGenerateObject,
+        };
+      } catch (error) {
+        console.log("❌ Erro no teste de conectividade:", error);
+
+        return {
+          hasIntegration: false,
+          hasAIGenerate: false,
+          hasAIGenerateObject: false,
+          integrationType: "error",
+          success: false,
+        };
+      }
+    },
+  });
+
+// ===== TESTE HTTP DIRETO =====
+
+export const createTestHTTPTool = (env: Env) =>
+  createTool({
+    id: "TEST_HTTP",
+    description: "Teste de conectividade HTTP direta",
+    inputSchema: z.object({}),
+    outputSchema: z.object({
+      googleStatus: z.string(),
+      decoStatus: z.string(),
+      success: z.boolean(),
+    }),
+    execute: async () => {
+      try {
+        console.log("🌐 Testando conectividade HTTP...");
+
+        // Teste 1: Google (deve funcionar)
+        let googleStatus = "error";
+        try {
+          const googleResponse = await fetch("https://www.google.com", {
+            method: "HEAD",
+            signal: AbortSignal.timeout(5000),
+          });
+          googleStatus = googleResponse.ok
+            ? "ok"
+            : `status: ${googleResponse.status}`;
+        } catch (error) {
+          googleStatus = `error: ${error instanceof Error ? error.message : "unknown"}`;
+        }
+
+        // Teste 2: Deco (pode falhar)
+        let decoStatus = "error";
+        try {
+          const decoResponse = await fetch("https://deco.chat", {
+            method: "HEAD",
+            signal: AbortSignal.timeout(5000),
+          });
+          decoStatus = decoResponse.ok
+            ? "ok"
+            : `status: ${decoResponse.status}`;
+        } catch (error) {
+          decoStatus = `error: ${error instanceof Error ? error.message : "unknown"}`;
+        }
+
+        console.log("📊 Status HTTP:", { googleStatus, decoStatus });
+
+        return {
+          googleStatus,
+          decoStatus,
+          success: googleStatus === "ok",
+        };
+      } catch (error) {
+        console.log("❌ Erro no teste HTTP:", error);
+
+        return {
+          googleStatus: "error",
+          decoStatus: "error",
+          success: false,
+        };
+      }
+    },
+  });
+
+// ===== TOOL PRIVADA DE IA =====
+
+export const createPrivateAITool = (env: Env) =>
+  createPrivateTool({
+    id: "PRIVATE_AI_TEST",
+    description: "Teste privado de IA (requer autenticação)",
+    inputSchema: z.object({
+      message: z.string().optional(),
+    }),
+    outputSchema: z.object({
+      response: z.string(),
+      success: z.boolean(),
+      userInfo: z.object({
+        id: z.string(),
+        email: z.string(),
+      }),
+    }),
+    execute: async ({ context }) => {
+      try {
+        console.log("🔐 Testando IA com autenticação...");
+
+        const aiResponse = await env.DECO_CHAT_WORKSPACE_API.AI_GENERATE({
+          model: "openai:gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content:
+                context.message ||
+                "Diga apenas 'IA funcionando com autenticação!'",
+            },
+          ],
+          temperature: 0.1,
+          maxTokens: 100,
+        });
+
+        console.log("✅ IA privada funcionou! Resposta:", aiResponse.text);
+
+        return {
+          response: aiResponse.text || "IA não retornou resposta",
+          success: true,
+          userInfo: {
+            id: "authenticated-user",
+            email: "user@example.com",
+          },
+        };
+      } catch (error) {
+        console.log("❌ Erro na IA privada:", error);
+
+        return {
+          response: `Erro na IA: ${error instanceof Error ? error.message : "Erro desconhecido"}`,
+          success: false,
+          userInfo: {
+            id: "authenticated-user",
+            email: "user@example.com",
+          },
+        };
+      }
+    },
+  });
+
+// ===== TOOL PRIVADA DE IA COM SCHEMA =====
+
+export const createPrivateAISchemaTool = (env: Env) =>
+  createPrivateTool({
+    id: "PRIVATE_AI_SCHEMA",
+    description: "Teste privado de IA com schema (requer autenticação)",
+    inputSchema: z.object({
+      prompt: z.string().optional(),
+    }),
+    outputSchema: z.object({
+      result: z.object({
+        title: z.string(),
+        description: z.string(),
+        priority: z.string(),
+      }),
+      success: z.boolean(),
+      userInfo: z.object({
+        id: z.string(),
+        email: z.string(),
+      }),
+    }),
+    execute: async ({ context }) => {
+      try {
+        console.log("🔐 Testando IA com schema e autenticação...");
+
+        const aiResponse = await env.DECO_CHAT_WORKSPACE_API.AI_GENERATE_OBJECT(
+          {
+            model: "openai:gpt-4o-mini",
+            messages: [
+              {
+                role: "user",
+                content:
+                  context.prompt ||
+                  "Crie uma tarefa simples para minha lista de TODO",
+              },
+            ],
+            schema: {
+              type: "object",
+              properties: {
+                title: {
+                  type: "string",
+                  description: "Título da tarefa",
+                },
+                description: {
+                  type: "string",
+                  description: "Descrição da tarefa",
+                },
+                priority: {
+                  type: "string",
+                  enum: ["baixa", "média", "alta"],
+                  description: "Prioridade da tarefa",
+                },
+              },
+              required: ["title", "description", "priority"],
+            },
+            temperature: 0.7,
+          }
+        );
+
+        console.log(
+          "✅ IA privada com schema funcionou! Resposta:",
+          aiResponse.object
+        );
+
+        return {
+          result: aiResponse.object as any,
+          success: true,
+          userInfo: {
+            id: "authenticated-user",
+            email: "user@example.com",
+          },
+        };
+      } catch (error) {
+        console.log("❌ Erro na IA privada com schema:", error);
+
+        return {
+          result: {
+            title: "Tarefa de teste",
+            description: "Descrição de teste",
+            priority: "média",
+          },
+          success: false,
+          userInfo: {
+            id: "authenticated-user",
+            email: "user@example.com",
+          },
+        };
+      }
     },
   });
 
@@ -433,11 +878,14 @@ export const createZipCodeLookupTool = (env: Env) =>
 export const createSistemaInteligenteTool = (env: Env) =>
   createTool({
     id: "SISTEMA_INTELIGENTE",
-    description: "Sistema inteligente para consulta de CEP e previsão do tempo",
+    description:
+      "Sistema inteligente para consulta de CEP e previsão do tempo com contexto melhorado",
     inputSchema: IntelligentWorkflowRequestSchema,
     outputSchema: IntelligentWorkflowResponseSchema,
     execute: async ({ context }) => {
       const { userInput } = context;
+
+      console.log("🧠 Sistema Inteligente - Input:", userInput);
 
       // Análise da entrada do usuário
       const inputMessage = userInput.toLowerCase();
@@ -449,17 +897,142 @@ export const createSistemaInteligenteTool = (env: Env) =>
       let weatherData = null;
       let citiesFound = null;
 
+      // Primeiro, tenta usar IA para interpretar a intenção do usuário
+      let aiInterpretation = null;
       try {
-        // Extrair CEP e verificar se há pedido de clima
-        const extractedZipCode = extractZipCode(userInput);
-        const hasWeatherRequest = hasWeatherKeyword(userInput);
+        if (env.DECO_CHAT_WORKSPACE_API?.AI_GENERATE_OBJECT) {
+          console.log("🤖 Usando IA para interpretar entrada do usuário...");
 
+          const aiPromise = env.DECO_CHAT_WORKSPACE_API.AI_GENERATE_OBJECT({
+            model: "openai:gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content: `Você é um assistente especializado em interpretar consultas sobre CEP e previsão do tempo em português brasileiro.
+
+Analise a entrada do usuário e identifique:
+1. Se é uma consulta de CEP (ex: "CEP 12345678", "endereço do cep 12345-678")
+2. Se é uma consulta de previsão do tempo (ex: "tempo em São Paulo", "previsão", "clima em Ibitinga")
+3. Se é uma consulta combinada (ex: "CEP 12345678 e previsão")
+4. Se menciona uma cidade específica (extraia o nome completo)
+5. Se é uma consulta contextual (ex: "previsão", "tempo", "clima" sem especificar onde)
+
+Considere variações como:
+- "previsão tabatinga" → cidade: "Tabatinga"
+- "clima ibitinga" → cidade: "Ibitinga"
+- "tempo são paulo sp" → cidade: "São Paulo", estado: "SP"
+- "temperatura rio de janeiro" → cidade: "Rio de Janeiro"
+- "sao paulo" = "São Paulo"
+- "sp" pode ser "São Paulo" dependendo do contexto
+- "capital paulista" = "São Paulo"
+- "cidade maravilhosa" = "Rio de Janeiro"
+- "previsão" sem cidade = consulta contextual`,
+              },
+              {
+                role: "user",
+                content: userInput,
+              },
+            ],
+            schema: {
+              type: "object",
+              properties: {
+                tipo: {
+                  type: "string",
+                  enum: ["CEP", "CLIMA", "CEP_E_CLIMA", "CONTEXTUAL", "OUTROS"],
+                  description: "Tipo da consulta identificada",
+                },
+                cidade: {
+                  type: "string",
+                  description: "Nome da cidade extraído e normalizado",
+                },
+                estado: {
+                  type: "string",
+                  description: "Estado extraído se mencionado",
+                },
+                contextual: {
+                  type: "boolean",
+                  description:
+                    "Se é uma consulta que precisa de contexto anterior",
+                },
+              },
+              required: ["tipo", "contextual"],
+            },
+            temperature: 0.1,
+          });
+
+          // Timeout de 15 segundos (aumentado de 10 para 15)
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error("AI timeout")), 15000);
+          });
+
+          console.log("🤖 Aguardando resposta da IA...");
+          aiInterpretation = (await Promise.race([
+            aiPromise,
+            timeoutPromise,
+          ])) as any;
+          console.log("🤖 IA Interpretação:", aiInterpretation?.object);
+        } else {
+          console.log(
+            "⚠️ Integração de IA não disponível, usando análise tradicional"
+          );
+        }
+      } catch (error) {
+        console.log(
+          "⚠️ Erro na interpretação por IA, usando análise tradicional:",
+          error instanceof Error ? error.message : "Erro desconhecido"
+        );
+
+        // Log adicional para debug
+        if (error instanceof Error) {
+          console.log("🔍 Detalhes do erro:", {
+            name: error.name,
+            message: error.message,
+            stack: error.stack?.split("\n")[0], // Primeira linha do stack
+          });
+        }
+      }
+
+      // Análise tradicional como fallback
+      const extractedZipCode = extractZipCode(userInput);
+      const hasWeatherRequest = hasWeatherKeyword(userInput);
+      const isContextualQuery = isContextualWeatherQuery(userInput);
+
+      console.log("🔍 Análise tradicional:", {
+        extractedZipCode,
+        hasWeatherRequest,
+        isContextualQuery,
+        userInput,
+        inputMessage,
+      });
+
+      // Usa interpretação da IA se disponível, senão usa análise tradicional
+      const interpretation = aiInterpretation?.object || {
+        tipo: extractedZipCode
+          ? hasWeatherRequest
+            ? "CEP_E_CLIMA"
+            : "CEP"
+          : hasWeatherRequest
+            ? "CLIMA"
+            : "OUTROS",
+        cep: extractedZipCode,
+        cidade: null,
+        estado: null,
+        contextual: isContextualQuery,
+      };
+
+      console.log("🎯 Interpretação final:", interpretation);
+
+      try {
         // Cenário 1: CEP + Weather na mesma mensagem
-        if (extractedZipCode && hasWeatherRequest) {
+        if (
+          interpretation.tipo === "CEP_E_CLIMA" ||
+          (extractedZipCode && hasWeatherRequest)
+        ) {
           try {
             // Primeiro buscar dados do CEP
+            const cepToUse = interpretation.cep || extractedZipCode;
             const cepResponse = await fetch(
-              `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_ZIPCODE_LOOKUP || "/cep/v1"}/${extractedZipCode}`
+              `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_ZIPCODE_LOOKUP || "/cep/v1"}/${cepToUse}`
             );
 
             if (cepResponse.ok) {
@@ -520,10 +1093,11 @@ export const createSistemaInteligenteTool = (env: Env) =>
           }
         }
         // Cenário 2: Apenas CEP
-        else if (extractedZipCode) {
+        else if (interpretation.tipo === "CEP" || extractedZipCode) {
+          const cepToUse = interpretation.cep || extractedZipCode;
           try {
             const response = await fetch(
-              `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_ZIPCODE_LOOKUP || "/cep/v1"}/${extractedZipCode}`
+              `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_ZIPCODE_LOOKUP || "/cep/v1"}/${cepToUse}`
             );
             if (response.ok) {
               const data = await response.json();
@@ -547,18 +1121,29 @@ export const createSistemaInteligenteTool = (env: Env) =>
             finalMessage = "Verifique se o CEP está correto e tente novamente.";
           }
         }
-        // Cenário 3: Apenas previsão do tempo
-        else if (hasWeatherRequest) {
-          const cityAndState = extractCityAndState(userInput);
-          let cityName = null;
-          let stateName = null;
+        // Cenário 3: Apenas previsão do tempo (incluindo consultas contextuais enriquecidas)
+        else if (interpretation.tipo === "CLIMA" || hasWeatherRequest) {
+          // Usa cidade da IA se disponível, senão usa extração tradicional
+          let cityName = interpretation.cidade;
+          let stateName = interpretation.estado;
 
-          if (cityAndState) {
-            cityName = cityAndState.city;
-            stateName = cityAndState.state;
-          } else {
-            cityName = extractBestCityName(userInput);
+          if (!cityName) {
+            const cityAndState = extractCityAndState(userInput);
+            if (cityAndState) {
+              cityName = cityAndState.city;
+              stateName = cityAndState.state;
+            } else {
+              cityName = extractBestCityName(userInput);
+            }
           }
+
+          console.log("🔍 Processando consulta de clima:", {
+            aiCity: interpretation.cidade,
+            aiState: interpretation.estado,
+            extractedCity: cityName,
+            extractedState: stateName,
+            originalInput: userInput,
+          });
 
           if (cityName) {
             try {
@@ -583,7 +1168,7 @@ export const createSistemaInteligenteTool = (env: Env) =>
                 if (cities.length > 0) {
                   // Múltiplas cidades encontradas
                   if (cities.length > 1 && !stateName) {
-                    citiesFound = cities.slice(0, 5).map((city: any) => ({
+                    citiesFound = cities.map((city: any) => ({
                       id: city.id,
                       name: city.nome,
                       state: city.estado,
@@ -627,9 +1212,9 @@ export const createSistemaInteligenteTool = (env: Env) =>
                 } else {
                   action = ACTIONS.CITY_NOT_FOUND;
                   executedAction = "Cidade não encontrada";
-                  initialMessage = `❌ Não foi possível encontrar dados de previsão do tempo para "${cityName}".`;
+                  initialMessage = `❌ Não encontrei a cidade "${cityName}" na base de dados do CPTEC.`;
                   finalMessage =
-                    "Tente com o nome completo da cidade ou verifique a grafia.";
+                    "🔍 Tente com: nome completo da cidade, incluir o estado (ex: 'São Paulo/SP') ou verificar a grafia.";
                 }
               }
             } catch (error) {
@@ -647,14 +1232,91 @@ export const createSistemaInteligenteTool = (env: Env) =>
               "Por favor, informe o nome da cidade (ex: 'São Paulo', 'Rio de Janeiro').";
           }
         }
-        // Cenário 4: Fora do escopo
+        // Cenário 4: Consulta contextual pura (sem cidade específica)
+        else if (
+          interpretation.tipo === "CONTEXTUAL" ||
+          interpretation.contextual ||
+          isContextualQuery ||
+          (hasWeatherRequest &&
+            !extractCityAndState(userInput) &&
+            !extractBestCityName(userInput))
+        ) {
+          // Se a entrada foi enriquecida pelo frontend (contém cidade), processa como clima
+          const cityAndState = extractCityAndState(userInput);
+          let cityName = null;
+
+          if (cityAndState) {
+            cityName = cityAndState.city;
+          } else {
+            cityName = extractBestCityName(userInput);
+          }
+
+          if (cityName) {
+            // Entrada foi enriquecida, processa como consulta de clima
+            try {
+              const cityResponse = await fetch(
+                `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_CITY_SEARCH || "/cptec/v1/cidade"}/${encodeURIComponent(cityName)}`
+              );
+              if (cityResponse.ok) {
+                let cities = await cityResponse.json();
+
+                if (cities.length > 0) {
+                  // Se múltiplas cidades, pega a primeira (mais provável do contexto)
+                  const city = cities[0];
+                  const weatherResponse = await fetch(
+                    `${env.BRASIL_API_BASE_URL || "https://brasilapi.com.br/api"}${env.BRASIL_API_WEATHER_FORECAST || "/cptec/v1/clima/previsao"}/${city.id}`
+                  );
+                  if (weatherResponse.ok) {
+                    const weatherApiData = await weatherResponse.json();
+                    weatherData = {
+                      city: weatherApiData.cidade,
+                      state: weatherApiData.estado,
+                      updatedAt:
+                        weatherApiData.atualizado_em || "Não informado",
+                      weather: weatherApiData.clima.map((day: any) => ({
+                        date: day.data || "Não informado",
+                        condition: day.condition || "Não informado",
+                        conditionDescription:
+                          day.condicao_desc || "Não informado",
+                        minimum: day.min || 0,
+                        maximum: day.max || 0,
+                        uvIndex: day.indice_uv || 0,
+                      })),
+                    };
+
+                    action = ACTIONS.CONSULT_WEATHER_DIRECT;
+                    executedAction = "Consulta de previsão com contexto";
+                    initialMessage =
+                      "🌤️ Usando o contexto anterior, encontrei a previsão do tempo!";
+                    finalMessage = "Dados obtidos da API CPTEC/Brasil API.";
+                  }
+                }
+              }
+            } catch (error) {
+              action = ACTIONS.OUT_OF_SCOPE;
+              executedAction = "Erro na consulta contextual";
+              initialMessage = `❌ Erro ao processar consulta contextual: ${error instanceof Error ? error.message : "Erro desconhecido"}`;
+              finalMessage = "Tente ser mais específico sobre a cidade.";
+            }
+          } else {
+            // Entrada não foi enriquecida, mas é uma consulta de clima
+            // Vamos tentar usar o contexto da conversa anterior
+            action = ACTIONS.CONTEXT_QUERY;
+            executedAction = "Consulta contextual detectada";
+            initialMessage =
+              "🔍 Detectei que você quer saber sobre previsão do tempo, mas não especificou a cidade.";
+            finalMessage =
+              "💡 Dica: Você pode perguntar 'previsão' após consultar um CEP, ou especificar a cidade diretamente (ex: 'tempo em São Paulo').";
+          }
+        }
+        // Cenário 5: Fora do escopo
         else {
           action = ACTIONS.OUT_OF_SCOPE;
           executedAction = "Consulta fora do escopo";
           initialMessage =
             "🤔 Não consegui identificar uma consulta de CEP ou previsão do tempo.";
           finalMessage =
-            "Tente algo como: 'CEP 01310100' ou 'Tempo em São Paulo'.";
+            "Tente algo como: 'CEP 01310100', 'Tempo em São Paulo' ou 'Previsão em Tabatinga'.";
         }
       } catch (error) {
         action = ACTIONS.OUT_OF_SCOPE;
@@ -1022,7 +1684,6 @@ ${weatherData.clima
                   // Check if multiple cities found
                   if (cities.length > 1 && !stateName) {
                     const cityList = cities
-                      .slice(0, 5) // Limit to first 5 cities
                       .map(
                         (city: any, index: number) =>
                           `${index + 1}. **${city.nome}** - ${city.estado}`
@@ -1136,12 +1797,13 @@ ${cities
 
         // If no specific tool was used, generate a general AI response
         if (!toolUsed) {
-          const aiResponse = await env.DECO_CHAT_WORKSPACE_API.AI_GENERATE({
-            model: "openai:gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content: `Você é um assistente prestativo especializado em informações sobre CEPs, localidades e previsão do tempo do Brasil. 
+          try {
+            const aiResponse = await env.DECO_CHAT_WORKSPACE_API.AI_GENERATE({
+              model: "openai:gpt-4o-mini",
+              messages: [
+                {
+                  role: "system",
+                  content: `Você é um assistente prestativo especializado em informações sobre CEPs, localidades e previsão do tempo do Brasil. 
 
 Você pode ajudar com:
 🔍 **Consultas de CEP** - Digite um CEP (ex: 01310-100)
@@ -1149,16 +1811,21 @@ Você pode ajudar com:
 🌤️ **Previsão do tempo** - Use "tempo em São Paulo" ou "clima para Rio de Janeiro"
 
 Responda de forma amigável e suggira como o usuário pode usar essas funcionalidades.`,
-              },
-              ...aiMessages,
-            ],
-            temperature: 0.7,
-            maxTokens: 500,
-          });
+                },
+                ...aiMessages,
+              ],
+              temperature: 0.7,
+              maxTokens: 500,
+            });
 
-          aiContent =
-            aiResponse.text ||
-            "Olá! Como posso ajudá-lo com informações sobre CEPs, cidades ou previsão do tempo?";
+            aiContent =
+              aiResponse.text ||
+              "Olá! Como posso ajudá-lo com informações sobre CEPs, cidades ou previsão do tempo?";
+          } catch (error) {
+            console.log("⚠️ Erro na IA GENERATE:", error);
+            aiContent =
+              "Olá! Como posso ajudá-lo com informações sobre CEPs, cidades ou previsão do tempo?";
+          }
         }
       } catch (error) {
         aiContent = "❌ Ocorreu um erro interno. Tente novamente.";
@@ -1247,6 +1914,14 @@ export const tools = [
   createGenerateTodoWithAITool,
   createToggleTodoTool,
   createDeleteTodoTool,
+  // Teste IA
+  createTestAITool,
+  createTestAISchemaTool,
+  createTestAIConnectivityTool,
+  createTestHTTPTool,
+  // Tools Privadas de IA
+  createPrivateAITool,
+  createPrivateAISchemaTool,
   // City Search & ZipCode Tools
   createCitySearchTool,
   createWeatherForecastTool,

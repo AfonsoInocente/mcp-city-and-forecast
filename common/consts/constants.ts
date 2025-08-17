@@ -15,6 +15,7 @@ export const ACTIONS = {
   OUT_OF_SCOPE: "OUT_OF_SCOPE",
   MULTIPLE_CITIES: "MULTIPLE_CITIES",
   CITY_NOT_FOUND: "CITY_NOT_FOUND",
+  CONTEXT_QUERY: "CONTEXT_QUERY",
 } as const;
 
 export type ActionType = (typeof ACTIONS)[keyof typeof ACTIONS];
@@ -34,11 +35,11 @@ export const TOOL_IDS = {
   // Core tools
   INTELLIGENT_DECISOR: "INTELLIGENT_DECISOR",
   ZIP_CODE_LOOKUP: "CONSULT_ZIP_CODE", // Uses ACTIONS.CONSULT_ZIP_CODE
-  
+
   // Data analysis and AI tools
   DATA_ANALYSIS: "ANALYZE_DATA_WITH_AI",
   AI_TEST: "AI_TEST",
-  
+
   // Location and weather tools
   CITY_SEARCH: "SEARCH_LOCALITY",
   WEATHER_FORECAST: "WEATHER_FORECAST",
@@ -49,7 +50,7 @@ export type ToolId = (typeof TOOL_IDS)[keyof typeof TOOL_IDS];
 // Context constants for maintaining conversation state
 export const CONTEXT_TYPES = {
   CITY: "CITY",
-  CEP: "CEP", 
+  CEP: "CEP",
   WEATHER: "WEATHER",
   MULTIPLE_CITIES: "MULTIPLE_CITIES",
 } as const;
@@ -60,7 +61,7 @@ export type ContextType = (typeof CONTEXT_TYPES)[keyof typeof CONTEXT_TYPES];
 export const WEATHER_QUERY_PATTERNS = [
   // Direct weather queries without city
   "previsão",
-  "previsao", 
+  "previsao",
   "tempo",
   "clima",
   "temperatura",
