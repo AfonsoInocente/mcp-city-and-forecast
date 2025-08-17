@@ -20,3 +20,9 @@ export const messagesTable = sqliteTable("messages", {
   content: text("content").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
+
+export const todosTable = sqliteTable("todos", {
+  id: integer("id").primaryKey(),
+  title: text("title"),
+  completed: integer("completed").default(0),
+});

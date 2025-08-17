@@ -31,9 +31,207 @@ import {
 import { createPrivateTool, createTool } from "@deco/workers-runtime/mastra";
 import { z } from "zod";
 import type { Env } from "./main.ts";
-import { conversationsTable, messagesTable } from "./schema.ts";
+import { conversationsTable, messagesTable, todosTable } from "./schema.ts";
 import { getDb } from "./db.ts";
 import { eq, desc } from "drizzle-orm";
+
+// ===== USER TOOL (REQUIRED FOR DECO DEPLOY) =====
+
+export const createGetUserTool = (env: Env) =>
+  createTool({
+    id: "GET_USER",
+    description: "Get the current user (public access - no login required)",
+    inputSchema: z.object({}),
+    outputSchema: z.object({
+      id: z.string(),
+      name: z.string().nullable(),
+      avatar: z.string().nullable(),
+      email: z.string(),
+    }),
+    execute: async () => {
+      // Retorna um usuário público/guest já que não queremos login
+      return {
+        id: "guest-user",
+        name: "Usuário Público",
+        avatar: null,
+        email: "guest@mcp-previsao.app",
+      };
+    },
+  });
+
+const TODO_GENERATION_SCHEMA = {
+  type: "object",
+  properties: {
+    title: {
+      type: "string",
+      description: "The title of the todo",
+    },
+  },
+  required: ["title"],
+};
+
+/**
+ * This tool is declared as public and can be executed by anyone
+ * that has access to your MCP server.
+ */
+export const createListTodosTool = (env: Env) =>
+  createTool({
+    id: "LIST_TODOS",
+    description: "List all todos",
+    inputSchema: z.object({}),
+    outputSchema: z.object({
+      todos: z.array(
+        z.object({
+          id: z.number(),
+          title: z.string().nullable(),
+          completed: z.boolean(),
+        })
+      ),
+    }),
+    execute: async () => {
+      const db = await getDb(env);
+      const todos = await db.select().from(todosTable);
+      return {
+        todos: todos.map((todo) => ({
+          ...todo,
+          completed: todo.completed === 1,
+        })),
+      };
+    },
+  });
+
+export const createGenerateTodoWithAITool = (env: Env) =>
+  createTool({
+    id: "GENERATE_TODO_WITH_AI",
+    description: "Generate a todo with AI",
+    inputSchema: z.object({}),
+    outputSchema: z.object({
+      todo: z.object({
+        id: z.number(),
+        title: z.string().nullable(),
+        completed: z.boolean(),
+      }),
+    }),
+    execute: async () => {
+      const db = await getDb(env);
+
+      // Como não temos acesso garantido ao DECO_CHAT_WORKSPACE_API no modo público,
+      // vamos gerar um TODO mock para manter compatibilidade
+      const mockTodoTitles = [
+        "Organizar a mesa de trabalho",
+        "Aprender algo novo hoje",
+        "Fazer uma pausa para o café",
+        "Revisar emails importantes",
+        "Planejar o fim de semana",
+        "Atualizar lista de tarefas",
+        "Fazer exercícios de respiração",
+        "Organizar arquivos digitais",
+        "Ler um artigo interessante",
+        "Fazer networking profissional",
+      ];
+
+      const randomTitle =
+        mockTodoTitles[Math.floor(Math.random() * mockTodoTitles.length)];
+
+      const todo = await db
+        .insert(todosTable)
+        .values({
+          title: randomTitle,
+          completed: 0,
+        })
+        .returning({ id: todosTable.id });
+
+      return {
+        todo: {
+          id: todo[0].id,
+          title: randomTitle,
+          completed: false,
+        },
+      };
+    },
+  });
+
+export const createToggleTodoTool = (env: Env) =>
+  createTool({
+    id: "TOGGLE_TODO",
+    description: "Toggle a todo's completion status",
+    inputSchema: z.object({
+      id: z.number(),
+    }),
+    outputSchema: z.object({
+      todo: z.object({
+        id: z.number(),
+        title: z.string().nullable(),
+        completed: z.boolean(),
+      }),
+    }),
+    execute: async ({ context }) => {
+      const db = await getDb(env);
+
+      // First get the current todo
+      const currentTodo = await db
+        .select()
+        .from(todosTable)
+        .where(eq(todosTable.id, context.id))
+        .limit(1);
+
+      if (currentTodo.length === 0) {
+        throw new Error("Todo not found");
+      }
+
+      // Toggle the completed status
+      const newCompletedStatus = currentTodo[0].completed === 1 ? 0 : 1;
+
+      const updatedTodo = await db
+        .update(todosTable)
+        .set({ completed: newCompletedStatus })
+        .where(eq(todosTable.id, context.id))
+        .returning();
+
+      return {
+        todo: {
+          id: updatedTodo[0].id,
+          title: updatedTodo[0].title,
+          completed: updatedTodo[0].completed === 1,
+        },
+      };
+    },
+  });
+
+export const createDeleteTodoTool = (env: Env) =>
+  createTool({
+    id: "DELETE_TODO",
+    description: "Delete a todo",
+    inputSchema: z.object({
+      id: z.number(),
+    }),
+    outputSchema: z.object({
+      success: z.boolean(),
+      deletedId: z.number(),
+    }),
+    execute: async ({ context }) => {
+      const db = await getDb(env);
+
+      // First check if the todo exists
+      const existingTodo = await db
+        .select()
+        .from(todosTable)
+        .where(eq(todosTable.id, context.id))
+        .limit(1);
+
+      if (existingTodo.length === 0) {
+        throw new Error("Todo not found");
+      }
+
+      // Delete the todo
+      await db.delete(todosTable).where(eq(todosTable.id, context.id));
+
+      return {
+        success: true,
+        deletedId: context.id,
+      };
+    },
+  });
 
 // ===== CITY SEARCH & ZIPCODE TOOLS =====
 
@@ -1043,6 +1241,12 @@ export const createGetMessagesTool = (env: Env) =>
   });
 
 export const tools = [
+  // User Tool (required for Deco deploy)
+  createGetUserTool,
+  createListTodosTool,
+  createGenerateTodoWithAITool,
+  createToggleTodoTool,
+  createDeleteTodoTool,
   // City Search & ZipCode Tools
   createCitySearchTool,
   createWeatherForecastTool,
