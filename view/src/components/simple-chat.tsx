@@ -50,12 +50,25 @@ export function SimpleChat() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Foca no input automaticamente
-  useEffect(() => {
+  // Função para focar no input
+  const focusInput = () => {
     if (inputRef.current) {
       inputRef.current.focus();
     }
+  };
+
+  // Foca no input automaticamente
+  useEffect(() => {
+    focusInput();
   }, []);
+
+  // Foca no input quando as mensagens mudam (exceto na primeira renderização)
+  useEffect(() => {
+    if (messages.length > 2) {
+      // Mais que as mensagens iniciais
+      setTimeout(focusInput, 100);
+    }
+  }, [messages]);
 
   // Adiciona mensagem à lista
   const addMessage = (
@@ -137,6 +150,9 @@ export function SimpleChat() {
       // Adiciona mensagem com opções clicáveis
       addMessage("📍 Escolha uma cidade:", false, undefined, options);
 
+      // Foca no input após mostrar opções
+      setTimeout(focusInput, 100);
+
       // Não adiciona mensagem final quando há opções para escolher
       return;
     }
@@ -182,6 +198,9 @@ export function SimpleChat() {
     if (response.finalMessage !== response.initialMessage) {
       addMessage(response.finalMessage, false);
     }
+
+    // Foca no input após processar toda a resposta
+    setTimeout(focusInput, 100);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -252,12 +271,18 @@ export function SimpleChat() {
 
       // Processa a resposta
       processAIResponse(response);
+
+      // Foca no input após processamento
+      setTimeout(focusInput, 100);
     } catch (error: any) {
       console.error("Erro no sistema:", error);
       addMessage(
         `❌ ${error.message || "Erro ao processar sua consulta. Tente novamente."}`,
         false
       );
+
+      // Foca no input após erro
+      setTimeout(focusInput, 100);
     }
   };
 
@@ -310,12 +335,18 @@ export function SimpleChat() {
 
         processAIResponse(response);
       }
+
+      // Foca no input após processamento da opção
+      setTimeout(focusInput, 100);
     } catch (error: any) {
       console.error("Erro ao processar opção:", error);
       addMessage(
         `❌ ${error.message || "Erro ao processar sua seleção. Tente novamente."}`,
         false
       );
+
+      // Foca no input após erro
+      setTimeout(focusInput, 100);
     }
   };
 
