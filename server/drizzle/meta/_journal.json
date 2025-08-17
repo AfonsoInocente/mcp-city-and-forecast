@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1755231671294,
+      "tag": "0000_pretty_silver_centurion",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1755446006284,
+      "tag": "0001_sour_kylun",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1755446762054,
+      "tag": "0002_dear_prima",
+      "breakpoints": true
+    }
+  ]
+}

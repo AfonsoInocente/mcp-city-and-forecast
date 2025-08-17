@@ -15,18 +15,21 @@ export const useUser = () => {
   return useSuspenseQuery({
     queryKey: ["user"],
     queryFn: () =>
-      client.GET_USER({}, {
-        handleResponse: (res: Response) => {
-          if (res.status === 401) {
-            throw new FailedToFetchUserError(
-              "Failed to fetch user",
-              globalThis.location.href,
-            );
-          }
+      client.GET_USER(
+        {},
+        {
+          handleResponse: (res: Response) => {
+            if (res.status === 401) {
+              throw new FailedToFetchUserError(
+                "Failed to fetch user",
+                globalThis.location.href
+              );
+            }
 
-          return res.json();
-        },
-      }),
+            return res.json();
+          },
+        }
+      ),
     retry: false,
   });
 };
@@ -40,96 +43,99 @@ export const useOptionalUser = () => {
   return useSuspenseQuery({
     queryKey: ["user"],
     queryFn: () =>
-      client.GET_USER({}, {
-        handleResponse: async (res: Response) => {
-          if (res.status === 401) {
-            return null;
-          }
-          return res.json();
-        },
-      }),
+      client.GET_USER(
+        {},
+        {
+          handleResponse: async (res: Response) => {
+            if (res.status === 401) {
+              return null;
+            }
+            return res.json();
+          },
+        }
+      ),
     retry: false,
   });
 };
 
-/**
- * Example hooks from the template
- */
+// ===== CHAT HOOKS =====
 
-export const useListTodos = () => {
-  return useSuspenseQuery({
-    queryKey: ["todos"],
-    queryFn: () => client.LIST_TODOS({}),
-  });
-};
-
-export const useGenerateTodoWithAI = () => {
+export const useCreateConversation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => client.GENERATE_TODO_WITH_AI({}),
+    mutationFn: (params: { title?: string }) =>
+      client.CREATE_CONVERSATION(params),
     onSuccess: (data) => {
-      queryClient.setQueryData(["todos"], (old: any) => {
-        if (!old?.todos) return old;
+      // Add new conversation to the list
+      queryClient.setQueryData(["conversations"], (old: any) => {
+        if (!old?.conversations)
+          return {
+            conversations: [{ ...data.conversation, lastMessage: null }],
+          };
         return {
           ...old,
-          todos: [...old.todos, data.todo],
+          conversations: [
+            { ...data.conversation, lastMessage: null },
+            ...old.conversations,
+          ],
         };
       });
+      toast.success("Nova conversa criada!");
     },
   });
 };
 
-export const useToggleTodo = () => {
+export const useListConversations = () => {
+  return useSuspenseQuery({
+    queryKey: ["conversations"],
+    queryFn: () => client.LIST_CONVERSATIONS({}),
+    retry: false,
+  });
+};
+
+export const useGetMessages = (conversationId: number) => {
+  return useSuspenseQuery({
+    queryKey: ["messages", conversationId],
+    queryFn: () => client.GET_MESSAGES({ conversationId }),
+    retry: false,
+  });
+};
+
+export const useSendMessage = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) =>
-      client.TOGGLE_TODO({ id }, {
-        handleResponse: (res: Response) => {
-          if (res.status === 401) {
-            toast.error("You need to be logged in to toggle todos");
-            throw new Error("Unauthorized to toggle TODO");
-          }
-          return res.json();
-        },
-      }),
-    onSuccess: (data) => {
-      // Update the todos list with the updated todo
-      queryClient.setQueryData(["todos"], (old: any) => {
-        if (!old?.todos) return old;
+    mutationFn: (params: { conversationId: number; message: string }) =>
+      client.SEND_MESSAGE(params),
+    onSuccess: (data, variables) => {
+      // Add new messages to the conversation
+      queryClient.setQueryData(
+        ["messages", variables.conversationId],
+        (old: any) => {
+          if (!old?.messages)
+            return { messages: [data.userMessage, data.aiResponse] };
+          return {
+            ...old,
+            messages: [...old.messages, data.userMessage, data.aiResponse],
+          };
+        }
+      );
+
+      // Update conversations list with last message
+      queryClient.setQueryData(["conversations"], (old: any) => {
+        if (!old?.conversations) return old;
         return {
           ...old,
-          todos: old.todos.map((todo: any) =>
-            todo.id === data.todo.id ? data.todo : todo
+          conversations: old.conversations.map((conv: any) =>
+            conv.id === variables.conversationId
+              ? {
+                  ...conv,
+                  lastMessage: data.aiResponse.content,
+                  updatedAt: data.aiResponse.createdAt,
+                }
+              : conv
           ),
         };
       });
-    },
-  });
-};
-
-export const useDeleteTodo = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: number) =>
-      client.DELETE_TODO({ id }, {
-        handleResponse: (res: Response) => {
-          if (res.status === 401) {
-            toast.error("You need to be logged in to delete todos");
-            throw new Error("Unauthorized to delete TODO");
-          }
-          return res.json();
-        },
-      }),
-    onSuccess: (data) => {
-      // Remove the deleted todo from the todos list
-      queryClient.setQueryData(["todos"], (old: any) => {
-        if (!old?.todos) return old;
-        return {
-          ...old,
-          todos: old.todos.filter((todo: any) => todo.id !== data.deletedId),
-        };
-      });
-      toast.success("Todo deleted successfully");
     },
   });
 };
