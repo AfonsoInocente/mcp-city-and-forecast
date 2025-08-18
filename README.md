@@ -79,8 +79,18 @@ cd mcp-previsao
 # Instale as dependências
 npm install
 
+#Entre na sua conta da DECO:
+deco login
+
 # Configure o projeto
 npm run configure
+
+#Siga as opções:
+- Enter app name: mcp-city-and-forecast
+- Select a workspace: [SEU-WORKSPACE]
+- Would you like to configure your IDE to use this project? Yes
+- Select your preferred IDE: Cursor (recomendo o Cursor)
+- Select integrations [Selecione a opção de AI Tool]
 
 # Inicie o servidor de desenvolvimento
 npm run dev
