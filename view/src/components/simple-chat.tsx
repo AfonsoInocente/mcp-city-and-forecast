@@ -209,7 +209,7 @@ export function SimpleChat() {
       const weatherMessage = `🌤️ **Previsão do Tempo para ${locationText}:**\n${response.weatherData.weather
         .map(
           (day: any) =>
-            `📅 ${new Date(day.date).toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" })}: ${day.conditionDescription} (${day.minimum}°C a ${day.maximum}°C)`
+            `📅 ${new Date(day.date + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" })}: ${day.conditionDescription} (${day.minimum}°C a ${day.maximum}°C)`
         )
         .join("\n")}`;
       addMessage(weatherMessage, false, {
@@ -419,7 +419,7 @@ export function SimpleChat() {
           const weatherMessage = `🌤️ **Previsão do Tempo para ${option.text}:**\n${forecastData.weather
             .map(
               (day: any) =>
-                `📅 ${new Date(day.date).toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" })}: ${day.conditionDescription} (${day.minimum}°C a ${day.maximum}°C)`
+                `📅 ${new Date(day.date + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" })}: ${day.conditionDescription} (${day.minimum}°C a ${day.maximum}°C)`
             )
             .join("\n")}`;
 
@@ -548,7 +548,9 @@ export function SimpleChat() {
                           className="flex justify-between items-center p-2 bg-gray-50 rounded"
                         >
                           <span className="font-medium">
-                            {new Date(day.date).toLocaleDateString("pt-BR", {
+                            {new Date(
+                              day.date + "T12:00:00"
+                            ).toLocaleDateString("pt-BR", {
                               weekday: "short",
                               day: "numeric",
                             })}

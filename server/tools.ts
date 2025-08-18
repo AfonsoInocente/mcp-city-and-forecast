@@ -33,7 +33,7 @@ import {
   searchCityAndForecast,
   postcodeAndForecast,
 } from "./provider/index.ts";
-import { createTool } from "@deco/workers-runtime/mastra";
+import { createPrivateTool, createTool } from "@deco/workers-runtime/mastra";
 import { z } from "zod";
 import type { Env } from "./main.ts";
 import { conversationsTable, messagesTable, todosTable } from "./schema.ts";
@@ -282,6 +282,404 @@ export const createDeleteTodoTool = (env: Env) =>
         success: true,
         deletedId: context.id,
       };
+    },
+  });
+
+// ===== TESTE IA SIMPLES =====
+
+export const createTestAITool = (env: Env) =>
+  createTool({
+    id: "TEST_AI",
+    description: "Teste simples de conversa com IA",
+    inputSchema: z.object({
+      message: z.string().optional(),
+    }),
+    outputSchema: z.object({
+      response: z.string(),
+      success: z.boolean(),
+    }),
+    execute: async ({ context }) => {
+      try {
+        console.log("🤖 Testando IA simples...");
+
+        // Teste com timeout mais longo e retry
+        const aiPromise = env.DECO_CHAT_WORKSPACE_API.AI_GENERATE({
+          model: "openai:gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: context.message || "Diga apenas 'Olá! IA funcionando!'",
+            },
+          ],
+          temperature: 0.1,
+          maxTokens: 50,
+        });
+
+        // Timeout de 30 segundos
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("AI timeout - 30s")), 30000);
+        });
+
+        const aiResponse = (await Promise.race([
+          aiPromise,
+          timeoutPromise,
+        ])) as any;
+
+        console.log("✅ IA simples funcionou! Resposta:", aiResponse.text);
+
+        return {
+          response: aiResponse.text || "IA não retornou resposta",
+          success: true,
+        };
+      } catch (error) {
+        console.log("❌ Erro na IA simples:", error);
+
+        return {
+          response: `Erro na IA: ${error instanceof Error ? error.message : "Erro desconhecido"}`,
+          success: false,
+        };
+      }
+    },
+  });
+
+// ===== TESTE IA COM SCHEMA (SEM BANCO) =====
+
+export const createTestAISchemaTool = (env: Env) =>
+  createTool({
+    id: "TEST_AI_SCHEMA",
+    description: "Teste IA com schema JSON (sem banco de dados)",
+    inputSchema: z.object({
+      prompt: z.string().optional(),
+    }),
+    outputSchema: z.object({
+      result: z.object({
+        title: z.string(),
+        description: z.string(),
+        priority: z.string(),
+      }),
+      success: z.boolean(),
+    }),
+    execute: async ({ context }) => {
+      try {
+        console.log("🤖 Testando IA com schema...");
+
+        const aiResponse = await env.DECO_CHAT_WORKSPACE_API.AI_GENERATE_OBJECT(
+          {
+            model: "openai:gpt-4o-mini",
+            messages: [
+              {
+                role: "user",
+                content:
+                  context.prompt ||
+                  "Crie uma tarefa simples para minha lista de TODO",
+              },
+            ],
+            schema: {
+              type: "object",
+              properties: {
+                title: {
+                  type: "string",
+                  description: "Título da tarefa",
+                },
+                description: {
+                  type: "string",
+                  description: "Descrição da tarefa",
+                },
+                priority: {
+                  type: "string",
+                  enum: ["baixa", "média", "alta"],
+                  description: "Prioridade da tarefa",
+                },
+              },
+              required: ["title", "description", "priority"],
+            },
+            temperature: 0.7,
+          }
+        );
+
+        console.log("✅ IA com schema funcionou! Resposta:", aiResponse.object);
+
+        return {
+          result: aiResponse.object as any,
+          success: true,
+        };
+      } catch (error) {
+        console.log("❌ Erro na IA com schema:", error);
+
+        return {
+          result: {
+            title: "Tarefa de teste",
+            description: "Descrição de teste",
+            priority: "média",
+          },
+          success: false,
+        };
+      }
+    },
+  });
+
+// ===== TESTE CONECTIVIDADE IA =====
+
+export const createTestAIConnectivityTool = (env: Env) =>
+  createTool({
+    id: "TEST_AI_CONNECTIVITY",
+    description: "Teste básico de conectividade com IA (sem chamada real)",
+    inputSchema: z.object({}),
+    outputSchema: z.object({
+      hasIntegration: z.boolean(),
+      hasAIGenerate: z.boolean(),
+      hasAIGenerateObject: z.boolean(),
+      integrationType: z.string(),
+      success: z.boolean(),
+    }),
+    execute: async () => {
+      try {
+        console.log("🔍 Testando conectividade com IA...");
+
+        // Verifica se a integração existe
+        const hasIntegration = !!env.DECO_CHAT_WORKSPACE_API;
+        const hasAIGenerate = !!env.DECO_CHAT_WORKSPACE_API?.AI_GENERATE;
+        const hasAIGenerateObject =
+          !!env.DECO_CHAT_WORKSPACE_API?.AI_GENERATE_OBJECT;
+
+        console.log("📊 Status da integração:", {
+          hasIntegration,
+          hasAIGenerate,
+          hasAIGenerateObject,
+        });
+
+        return {
+          hasIntegration,
+          hasAIGenerate,
+          hasAIGenerateObject,
+          integrationType: typeof env.DECO_CHAT_WORKSPACE_API,
+          success: hasIntegration && hasAIGenerate && hasAIGenerateObject,
+        };
+      } catch (error) {
+        console.log("❌ Erro no teste de conectividade:", error);
+
+        return {
+          hasIntegration: false,
+          hasAIGenerate: false,
+          hasAIGenerateObject: false,
+          integrationType: "error",
+          success: false,
+        };
+      }
+    },
+  });
+
+// ===== TESTE HTTP DIRETO =====
+
+export const createTestHTTPTool = (env: Env) =>
+  createTool({
+    id: "TEST_HTTP",
+    description: "Teste de conectividade HTTP direta",
+    inputSchema: z.object({}),
+    outputSchema: z.object({
+      googleStatus: z.string(),
+      decoStatus: z.string(),
+      success: z.boolean(),
+    }),
+    execute: async () => {
+      try {
+        console.log("🌐 Testando conectividade HTTP...");
+
+        // Teste 1: Google (deve funcionar)
+        let googleStatus = "error";
+        try {
+          const googleResponse = await fetch("https://www.google.com", {
+            method: "HEAD",
+            signal: AbortSignal.timeout(5000),
+          });
+          googleStatus = googleResponse.ok
+            ? "ok"
+            : `status: ${googleResponse.status}`;
+        } catch (error) {
+          googleStatus = `error: ${error instanceof Error ? error.message : "unknown"}`;
+        }
+
+        // Teste 2: Deco (pode falhar)
+        let decoStatus = "error";
+        try {
+          const decoResponse = await fetch("https://deco.chat", {
+            method: "HEAD",
+            signal: AbortSignal.timeout(5000),
+          });
+          decoStatus = decoResponse.ok
+            ? "ok"
+            : `status: ${decoResponse.status}`;
+        } catch (error) {
+          decoStatus = `error: ${error instanceof Error ? error.message : "unknown"}`;
+        }
+
+        console.log("📊 Status HTTP:", { googleStatus, decoStatus });
+
+        return {
+          googleStatus,
+          decoStatus,
+          success: googleStatus === "ok",
+        };
+      } catch (error) {
+        console.log("❌ Erro no teste HTTP:", error);
+
+        return {
+          googleStatus: "error",
+          decoStatus: "error",
+          success: false,
+        };
+      }
+    },
+  });
+
+// ===== TOOL PRIVADA DE IA =====
+
+export const createPrivateAITool = (env: Env) =>
+  createPrivateTool({
+    id: "PRIVATE_AI_TEST",
+    description: "Teste privado de IA (requer autenticação)",
+    inputSchema: z.object({
+      message: z.string().optional(),
+    }),
+    outputSchema: z.object({
+      response: z.string(),
+      success: z.boolean(),
+      userInfo: z.object({
+        id: z.string(),
+        email: z.string(),
+      }),
+    }),
+    execute: async ({ context }) => {
+      try {
+        console.log("🔐 Testando IA com autenticação...");
+
+        const aiResponse = await env.DECO_CHAT_WORKSPACE_API.AI_GENERATE({
+          model: "openai:gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content:
+                context.message ||
+                "Diga apenas 'IA funcionando com autenticação!'",
+            },
+          ],
+          temperature: 0.1,
+          maxTokens: 100,
+        });
+
+        console.log("✅ IA privada funcionou! Resposta:", aiResponse.text);
+
+        return {
+          response: aiResponse.text || "IA não retornou resposta",
+          success: true,
+          userInfo: {
+            id: "authenticated-user",
+            email: "user@example.com",
+          },
+        };
+      } catch (error) {
+        console.log("❌ Erro na IA privada:", error);
+
+        return {
+          response: `Erro na IA: ${error instanceof Error ? error.message : "Erro desconhecido"}`,
+          success: false,
+          userInfo: {
+            id: "authenticated-user",
+            email: "user@example.com",
+          },
+        };
+      }
+    },
+  });
+
+// ===== TOOL PRIVADA DE IA COM SCHEMA =====
+
+export const createPrivateAISchemaTool = (env: Env) =>
+  createPrivateTool({
+    id: "PRIVATE_AI_SCHEMA",
+    description: "Teste privado de IA com schema (requer autenticação)",
+    inputSchema: z.object({
+      prompt: z.string().optional(),
+    }),
+    outputSchema: z.object({
+      result: z.object({
+        title: z.string(),
+        description: z.string(),
+        priority: z.string(),
+      }),
+      success: z.boolean(),
+      userInfo: z.object({
+        id: z.string(),
+        email: z.string(),
+      }),
+    }),
+    execute: async ({ context }) => {
+      try {
+        console.log("🔐 Testando IA com schema e autenticação...");
+
+        const aiResponse = await env.DECO_CHAT_WORKSPACE_API.AI_GENERATE_OBJECT(
+          {
+            model: "openai:gpt-4o-mini",
+            messages: [
+              {
+                role: "user",
+                content:
+                  context.prompt ||
+                  "Crie uma tarefa simples para minha lista de TODO",
+              },
+            ],
+            schema: {
+              type: "object",
+              properties: {
+                title: {
+                  type: "string",
+                  description: "Título da tarefa",
+                },
+                description: {
+                  type: "string",
+                  description: "Descrição da tarefa",
+                },
+                priority: {
+                  type: "string",
+                  enum: ["baixa", "média", "alta"],
+                  description: "Prioridade da tarefa",
+                },
+              },
+              required: ["title", "description", "priority"],
+            },
+            temperature: 0.7,
+          }
+        );
+
+        console.log(
+          "✅ IA privada com schema funcionou! Resposta:",
+          aiResponse.object
+        );
+
+        return {
+          result: aiResponse.object as any,
+          success: true,
+          userInfo: {
+            id: "authenticated-user",
+            email: "user@example.com",
+          },
+        };
+      } catch (error) {
+        console.log("❌ Erro na IA privada com schema:", error);
+
+        return {
+          result: {
+            title: "Tarefa de teste",
+            description: "Descrição de teste",
+            priority: "média",
+          },
+          success: false,
+          userInfo: {
+            id: "authenticated-user",
+            email: "user@example.com",
+          },
+        };
+      }
     },
   });
 
@@ -1323,6 +1721,14 @@ export const tools = [
   createGenerateTodoWithAITool,
   createToggleTodoTool,
   createDeleteTodoTool,
+  // Teste IA
+  createTestAITool,
+  createTestAISchemaTool,
+  createTestAIConnectivityTool,
+  createTestHTTPTool,
+  // Tools Privadas de IA
+  createPrivateAITool,
+  createPrivateAISchemaTool,
   // City Search & ZipCode Tools
   createCitySearchTool,
   createWeatherForecastTool,
